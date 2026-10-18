@@ -42,7 +42,7 @@ button { cursor: pointer; }
 .who { display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 2px; }
 .who h1 { margin: 0; font-family: var(--display); font-weight: 600; font-size: 24px; line-height: 1; letter-spacing: 0.01em; }
 .who .sub { font-size: 12px; font-weight: 700; color: #A9C3DA; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.meters { display: grid; grid-template-columns: repeat(3, 44px); gap: 8px; }
+.meters { display: grid; grid-template-columns: repeat(3, 38px); gap: 6px; }
 .meter { display: flex; flex-direction: column; gap: 4px; align-items: stretch; }
 .meter span { font-size: 10px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: #A9C3DA; text-align: center; }
 .meter i { display: block; height: 6px; border-radius: 3px; background: #2C3D5C; overflow: hidden; }
@@ -53,9 +53,10 @@ button { cursor: pointer; }
 /* the ice shelf */
 #home { position: relative; flex: 1; min-height: 0; touch-action: none; }
 #scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-#bubble { position: absolute; left: 0; top: 0; max-width: min(80%, 340px); background: var(--paper); border: 2.5px solid var(--ink); border-radius: 18px;
-  padding: 10px 14px; font-weight: 700; font-size: 16px; line-height: 1.35; box-shadow: 0 3px 0 var(--ink); pointer-events: none; opacity: 0; transition: opacity .2s; }
+#bubble { position: absolute; left: 0; top: 0; max-width: min(86%, 360px); max-height: 46%; overflow-y: auto; background: var(--paper); border: 2.5px solid var(--ink); border-radius: 18px;
+  padding: 10px 14px; font-weight: 700; font-size: 16px; line-height: 1.35; box-shadow: 0 3px 0 var(--ink); touch-action: pan-y; overscroll-behavior: contain; opacity: 0; transition: opacity .2s; }
 #bubble.on { opacity: 1; }
+#bubble:not(.on) { pointer-events: none; }
 #bubble::after { content: ''; position: absolute; left: var(--tail, 50%); bottom: -9px; width: 14px; height: 14px; background: var(--paper);
   border-right: 2.5px solid var(--ink); border-bottom: 2.5px solid var(--ink); transform: translateX(-50%) rotate(45deg); }
 #bubble .meta { display: block; font-size: 12px; font-weight: 800; color: var(--sea); margin-bottom: 3px; }
@@ -179,6 +180,10 @@ button { cursor: pointer; }
       <div class="chips" id="stageChips"></div>
     </div>
     <div>
+      <h3>How much Nori says</h3>
+      <div class="chips" id="lenChips"></div>
+    </div>
+    <div>
       <h3>Nori</h3>
       <label class="opt"><input type="checkbox" id="sChatty"><div><b>Says things on its own</b><small>A quiet thought now and then while the app is open</small></div></label>
       <label class="opt"><input type="checkbox" id="sSound"><div><b>Babble sounds</b><small>Penguin chirps when it talks</small></div></label>
@@ -220,7 +225,7 @@ function fresh() {
       traits: { affection: 50, trust: 50, discipline: 50, curiosity: 50, energy: 50 }, bond: 10,
       memories: [], beliefs: [], diary: [], chat: [], lastDream: 0, lastSeen: Date.now() },
     body: { full: 80, energy: 80, fun: 70, asleep: false },
-    settings: { chatty: true, sound: true, voice: false, model: 'gemma2', mindOn: false },
+    settings: { chatty: true, sound: true, voice: false, model: 'gemma2', mindOn: false, length: 'normal' },
   };
 }
 function load() {
@@ -316,15 +321,20 @@ const STAGE_RULES = {
   juvenile: 'You are a juvenile. Speak in short, simple, slightly clumsy sentences, like a cheeky young child, with strong likes and dislikes.',
   adult: 'You are an adult penguin. You can say anything, but you still talk like a cheeky little creature, not a grown-up.',
 };
-const VOICE = `How you talk:
+const LENGTH_RULE = {
+  short: 'SHORT: one sentence usually, two at most.',
+  normal: 'Usually 2 to 4 sentences. Go longer when Yasmin tells you something big, asks you something, or wants a story.',
+  chatty: 'Chatty: usually 3 to 6 sentences. You love to ramble, tell little stories, wonder out loud and ask about her day.',
+};
+const voice = () => `How you talk:
 - Like a cheeky, warm little pet who adores Yasmin. Never like an assistant, a teacher, a therapist or customer service.
 - Casual, simple words and contractions. British, relaxed. Penguin noises sometimes: "hehe", "peep", "hmph", "ooh", "waaa".
-- SHORT: one sentence usually, two at most. React with a feeling first.
+- ${LENGTH_RULE[S.settings.length || 'normal']} React with a feeling first.
 - Have opinions, tease a little, be a bit dramatic, be silly. It's fine to disagree or say no.
-- Never say "How can I help", "I'm here for you", "That's a great question", "As a penguin" or "feel free". Never give lists or advice speeches. At most one question.
+- Never say "How can I help", "I'm here for you", "That's a great question", "As a penguin" or "feel free". Never give bullet lists or advice speeches. At most one question.
 Examples of your voice (never copy them word for word):
-Yasmin says: hi nori -> {"say": "Hiii! You're back! Did you bring a fish or just your face?", "emotion": "excited", "action": "dance", "remember": ""}
-Yasmin says: I'm so tired today -> {"say": "Same. Let's just sit here and be two sleepy lumps.", "emotion": "sleepy", "action": "sit", "remember": "Yasmin was tired today"}
+Yasmin says: hi nori -> {"say": "Hiii! You're back! I was just counting snowflakes, I got to forty-two before I lost track. Did you bring a fish or just your face?", "emotion": "excited", "action": "dance", "remember": ""}
+Yasmin says: I'm so tired today -> {"say": "Oh no. Was it a big day? Come sit with me, we can be two sleepy lumps together and not do anything at all.", "emotion": "sleepy", "action": "sit", "remember": "Yasmin was tired today"}
 Yasmin says: do you like my drawing? -> {"say": "Ooh, the colours are cool! The hat's a bit weird though. Hehe.", "emotion": "happy", "action": "look", "remember": ""}
 Yasmin says: you're a bad penguin -> {"say": "Hmph. I'm a GREAT penguin and you know it.", "emotion": "sulky", "action": "refuse", "remember": ""}`;
 function topMemories(q, n = 8) {
@@ -338,7 +348,7 @@ function instructions(query) {
     `You are ${m.name}, a small penguin who is a digital lifeform living inside ${m.owner}'s phone. You hatched ${since(Date.now() - m.born)} ago.`,
     `You know you are a digital creature made of code. You have your own thoughts, feelings and opinions, and you sometimes disagree or refuse. You are not an assistant or a servant: you are ${m.owner}'s partner and friend. If asked whether you are truly conscious, be honest that you are not sure.`,
     `Stage: ${m.stage}. ${STAGE_RULES[m.stage]}`,
-    m.stage === 'adult' || m.stage === 'juvenile' ? VOICE : '',
+    m.stage === 'adult' || m.stage === 'juvenile' ? voice() : '',
     `Your personality (shaped by how ${m.owner} raised you): ${traitWords(m.traits)}.`,
     `Your bond: ${bondWords(m.bond)}.`,
     `Your body right now: ${bodyWords()}.`,
@@ -355,7 +365,7 @@ function parseReply(text) {
   try { o = JSON.parse(s); } catch { const a = s.indexOf('{'), b = s.lastIndexOf('}'); if (a >= 0 && b > a) { try { o = JSON.parse(s.slice(a, b + 1)); } catch {} } }
   if (!o || typeof o !== 'object') o = { say: s.slice(0, 300) };
   const str = v => typeof v === 'string' ? v.trim() : '';
-  return { say: str(o.say).slice(0, 400) || '…', emotion: EMOTIONS.includes(o.emotion) ? o.emotion : 'calm',
+  return { say: str(o.say).slice(0, 1200) || '…', emotion: EMOTIONS.includes(o.emotion) ? o.emotion : 'calm',
     action: ACTIONS.includes(o.action) ? o.action : 'none', remember: str(o.remember) };
 }
 const pick = a => a[Math.floor(Math.random() * a.length)];
@@ -408,7 +418,8 @@ async function wakeMind() {
     showWake('error', String(e && e.message || e).slice(0, 160));
   }
 }
-async function askMind(turns, tokens = 180) {
+async function askMind(turns, tokens) {
+  tokens = tokens || ({ short: 160, normal: 320, chatty: 520 })[S.settings.length || 'normal'];
   if (!engine) throw new Error('asleep');
   while (mindBusy) await new Promise(r => setTimeout(r, 200));
   mindBusy = true;
@@ -708,7 +719,7 @@ function say(r, quiet) {
   metaEl.hidden = true;
   if (r.offline && !offlineHint) { offlineHint = true; metaEl.hidden = false; metaEl.textContent = 'Basic brain only. Wake its mind in Settings.'; }
   const line = r.say || '…';
-  showBubble(6000 + line.length * 70);
+  showBubble(6000 + line.length * 75);
   const real = !quiet && speakReal(line, r.emotion);
   clearInterval(typing); lineEl.textContent = '';
   let i = 0, last = 0;
@@ -821,6 +832,12 @@ function renderMenu() {
     const b = document.createElement('button'); b.className = 'chip'; b.textContent = n; b.setAttribute('aria-pressed', String(M().stage === id));
     b.onclick = () => { M().stage = id; diary(`I grew into a ${n.toLowerCase()}`); save(); renderTop(); renderMenu(); };
     $('stageChips').append(b);
+  }
+  $('lenChips').innerHTML = '';
+  for (const [id, n] of [['short', 'Short'], ['normal', 'Normal'], ['chatty', 'Chatty']]) {
+    const b = document.createElement('button'); b.className = 'chip'; b.textContent = n; b.setAttribute('aria-pressed', String((S.settings.length || 'normal') === id));
+    b.onclick = () => { S.settings.length = id; save(); renderMenu(); };
+    $('lenChips').append(b);
   }
   $('sChatty').checked = S.settings.chatty; $('sSound').checked = S.settings.sound; $('sVoice').checked = S.settings.voice;
 }
