@@ -752,7 +752,11 @@ async function playKokoro(text, emotion, reveal) {
   const lift = { happy: 1.035, excited: 1.06, curious: 1.025, scared: 1.05, sad: .95, sleepy: .93, sulky: .98, calm: 1 }[emotion] || 1;
   const pace = emotion === 'sleepy' || emotion === 'sad' ? .88 : emotion === 'excited' ? 1.05 : .97;
   const clean = speechText(text).replace(/\.{3}/g, '…');
-  const parts = clean.match(/[^,;:—.!?…]+(?:[,;:—]|[.!?…]+)?\s*/g) || [clean];
+  // whole sentences keep their natural tune (the voice pauses at commas by itself); only long ones are split at commas
+  const parts = [];
+  for (const sen of clean.match(/[^.!?…]+[.!?…]*\s*/g) || [clean]) {
+    if (sen.split(/\s+/).length > 14) parts.push(...(sen.match(/[^,;:—]+[,;:—]?\s*/g) || [sen])); else parts.push(sen);
+  }
   unlockAudio(); if (!ac) { reveal && reveal(text, true); return; }
   let at = ac.currentTime + .05, shown = '', sentenceStart = true;
   if (S.settings.sound && (S.settings.squeak ?? true)) { chirp(at, emotion, true); at += .14; }
