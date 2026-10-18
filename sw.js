@@ -1,6 +1,6 @@
 // Keeps Nori's home working without signal. (The AI model itself is cached separately by the AI library.)
-const CACHE = 'nori-shell-v1';
-const SHELL = ['./', './index.html', './worker.js', './manifest.webmanifest', './icon-192.png', './icon-512.png', './frames/frames.json'];
+const CACHE = 'nori-shell-v2';
+const SHELL = ['./', './index.html', './worker.js', './tts-worker.js', './manifest.webmanifest', './icon-192.png', './icon-512.png', './frames/frames.json'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil((async () => {

@@ -180,6 +180,18 @@ button { cursor: pointer; }
       <div class="chips" id="stageChips"></div>
     </div>
     <div>
+      <h3>Speaking voice</h3>
+      <p class="small" style="margin:0 0 10px">Used once Nori is a juvenile or adult. Younger Nori only babbles.</p>
+      <div class="chips" id="voiceMode"></div>
+      <p class="small" id="voiceStatus" style="margin:10px 0 0"></p>
+      <div class="prog" id="voiceProg" hidden style="margin-top:8px"><b id="voiceBar"></b></div>
+      <div id="voiceExtra" style="margin-top:12px; display:flex; flex-direction:column; gap:12px">
+        <div class="chips" id="voiceNames"></div>
+        <label class="opt" for="sCute"><div style="flex:1"><b>Cuteness</b><small>How high and squeaky Nori sounds</small><input type="range" id="sCute" min="0" max="100" step="5" style="width:100%; accent-color: var(--sea); margin-top:8px"></div></label>
+        <div class="row"><button class="btn ghost" id="voiceTest">Hear Nori</button></div>
+      </div>
+    </div>
+    <div>
       <h3>How much Nori says</h3>
       <div class="chips" id="lenChips"></div>
     </div>
@@ -187,7 +199,6 @@ button { cursor: pointer; }
       <h3>Nori</h3>
       <label class="opt"><input type="checkbox" id="sChatty"><div><b>Says things on its own</b><small>A quiet thought now and then while the app is open</small></div></label>
       <label class="opt"><input type="checkbox" id="sSound"><div><b>Babble sounds</b><small>Penguin chirps when it talks</small></div></label>
-      <label class="opt"><input type="checkbox" id="sVoice"><div><b>Real voice as an adult</b><small>Uses your phone's speech voice, pitched up</small></div></label>
     </div>
   </section>
 
@@ -225,7 +236,7 @@ function fresh() {
       traits: { affection: 50, trust: 50, discipline: 50, curiosity: 50, energy: 50 }, bond: 10,
       memories: [], beliefs: [], diary: [], chat: [], lastDream: 0, lastSeen: Date.now() },
     body: { full: 80, energy: 80, fun: 70, asleep: false },
-    settings: { chatty: true, sound: true, voice: false, model: 'gemma2', mindOn: false, length: 'normal' },
+    settings: { chatty: true, sound: true, voice: 'off', voiceName: 'af_heart', cute: 50, ttsOn: false, model: 'gemma2', mindOn: false, length: 'normal' },
   };
 }
 function load() {
@@ -238,6 +249,7 @@ function load() {
   } catch { return f; }
 }
 const S = load();
+if (S.settings.voice === true) S.settings.voice = 'phone'; if (S.settings.voice === false) S.settings.voice = 'off';
 // v2: Nori found its own voice; drop the stiff early chat so it doesn't copy it (memories stay)
 try { if ((Number(localStorage.getItem('nori-voice')) || 1) < 2) { S.mind.chat = []; localStorage.setItem('nori-voice', '2'); } } catch {}
 let saveT = 0;
@@ -691,12 +703,54 @@ function chirp(at, emotion, rise) {
     o.connect(g).connect(ac.destination); o.start(t); o.stop(t + .1);
   } catch {}
 }
-function speakReal(text, emotion) {
+// ---- speaking voice: babble only, the phone's voice, or Kokoro (a natural voice model on the phone) ----
+const KOKORO_VOICES = [['af_heart', 'Heart', 'Warm'], ['af_bella', 'Bella', 'Bright'], ['af_sky', 'Sky', 'Young'], ['af_nicole', 'Nicole', 'Soft'], ['bf_emma', 'Emma', 'British']];
+let ttsW = null, ttsReady = false, ttsLoading = false, ttsErr = '', ttsSeq = 0, ttsProg = {};
+const ttsWait = new Map();
+function ttsStart() {
+  if (ttsW) return;
+  ttsLoading = true; ttsErr = ''; renderVoice();
+  ttsW = new Worker(new URL('./tts-worker.js', import.meta.url), { type: 'module' });
+  ttsW.onmessage = ({ data }) => {
+    if (data.type === 'progress') { ttsProg[data.file] = [data.loaded || 0, data.total || 0]; renderVoice(); }
+    else if (data.type === 'ready') { ttsReady = true; ttsLoading = false; S.settings.ttsOn = true; save(); renderVoice(); }
+    else {
+      const w = ttsWait.get(data.id); ttsWait.delete(data.id);
+      if (w) (data.type === 'audio' ? w.res(data) : w.rej(data));
+      if (data.type === 'error' && !ttsReady) { ttsLoading = false; ttsErr = data.message; ttsW.terminate(); ttsW = null; renderVoice(); }
+    }
+  };
+  ttsW.onerror = () => { ttsLoading = false; ttsErr = "The voice couldn't load."; try { ttsW.terminate(); } catch {} ttsW = null; renderVoice(); };
+  ttsW.postMessage({ type: 'load' });
+}
+const ttsSay = (text, voice, speed) => new Promise((res, rej) => { const id = ++ttsSeq; ttsWait.set(id, { res, rej }); ttsW.postMessage({ type: 'say', id, text, voice, speed }); });
+const speechText = t => String(t).replace(/\*[^*]*\*/g, ' ').replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '').replace(/\s+/g, ' ').trim();
+let curSrc = null;
+async function playKokoro(text, emotion) {
+  const cute = S.settings.cute ?? 50, rate = 1 + cute / 100 * .26;          // pitch it up a little…
+  const pace = emotion === 'sleepy' || emotion === 'sad' ? .9 : emotion === 'excited' ? 1.1 : 1;
   try {
-    if (!S.settings.voice || M().stage !== 'adult' || !('speechSynthesis' in window)) return false;
+    const a = await ttsSay(speechText(text), S.settings.voiceName || 'af_heart', Math.max(.5, pace / rate)); // …and slow the words to match, so only the pitch changes
+    unlockAudio(); if (!ac) return;
+    const buf = ac.createBuffer(1, a.audio.length, a.sr); buf.copyToChannel(a.audio, 0);
+    try { curSrc?.stop(); } catch {}
+    const src = ac.createBufferSource(), g = ac.createGain(); src.buffer = buf; src.playbackRate.value = rate; g.gain.value = 1;
+    src.connect(g).connect(ac.destination); src.start(); curSrc = src;
+  } catch (e) { console.warn('voice', e); }
+}
+function phoneVoice() {
+  const vs = speechSynthesis.getVoices();
+  return vs.find(v => /en.GB/i.test(v.lang) && /female/i.test(v.name)) || vs.find(v => /en.GB/i.test(v.lang)) || vs.find(v => /^en/i.test(v.lang)) || null;
+}
+function speakReal(text, emotion) {
+  const mode = S.settings.voice;
+  if (!mode || mode === 'off' || !(M().stage === 'adult' || M().stage === 'juvenile')) return false;
+  if (mode === 'kokoro') { if (!ttsReady) return false; playKokoro(text, emotion); return true; }
+  try {
+    if (!('speechSynthesis' in window)) return false;
     speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text); u.lang = 'en-GB';
-    u.pitch = Math.min(2, 1.55 * (EMO_P[emotion] || 1)); u.rate = emotion === 'sleepy' || emotion === 'sad' ? .9 : 1.05; u.volume = .9;
+    const u = new SpeechSynthesisUtterance(speechText(text)), v = phoneVoice(); if (v) u.voice = v; u.lang = v ? v.lang : 'en-GB';
+    u.pitch = Math.min(2, 1 + (S.settings.cute ?? 50) / 100 * .5); u.rate = emotion === 'sleepy' || emotion === 'sad' ? .92 : 1.05;
     speechSynthesis.speak(u); return true;
   } catch { return false; }
 }
@@ -839,11 +893,48 @@ function renderMenu() {
     b.onclick = () => { S.settings.length = id; save(); renderMenu(); };
     $('lenChips').append(b);
   }
-  $('sChatty').checked = S.settings.chatty; $('sSound').checked = S.settings.sound; $('sVoice').checked = S.settings.voice;
+  $('sChatty').checked = S.settings.chatty; $('sSound').checked = S.settings.sound;
+  renderVoice();
 }
 $('sChatty').onchange = e => { S.settings.chatty = e.target.checked; save(); };
 $('sSound').onchange = e => { S.settings.sound = e.target.checked; save(); };
-$('sVoice').onchange = e => { S.settings.voice = e.target.checked; save(); };
+function renderVoice() {
+  const box = $('voiceMode'); if (!box) return;
+  const mode = S.settings.voice || 'off';
+  box.innerHTML = '';
+  for (const [id, n] of [['off', 'Babble only'], ['phone', 'Phone voice'], ['kokoro', 'Natural voice']]) {
+    const b = document.createElement('button'); b.className = 'chip'; b.textContent = n; b.setAttribute('aria-pressed', String(mode === id));
+    b.onclick = () => { S.settings.voice = id; save(); if (id === 'kokoro') ttsStart(); renderVoice(); };
+    box.append(b);
+  }
+  const st = $('voiceStatus'), pr = $('voiceProg');
+  pr.hidden = true;
+  if (mode === 'off') st.textContent = 'Nori talks in penguin chirps.';
+  else if (mode === 'phone') st.textContent = "Your phone's built-in voice, pitched up. Works straight away.";
+  else if (ttsReady) st.textContent = 'Natural voice ready. Free, and it runs on this phone.';
+  else if (ttsLoading) {
+    const v = Object.values(ttsProg), got = v.reduce((a, x) => a + x[0], 0), tot = v.reduce((a, x) => a + x[1], 0);
+    st.textContent = `Downloading Nori's voice… ${tot ? Math.round(got / 1048576) + ' of ' + Math.round(tot / 1048576) + ' MB' : ''}`;
+    pr.hidden = !tot; $('voiceBar').style.width = tot ? Math.round(got / tot * 100) + '%' : '0';
+  } else if (ttsErr) st.textContent = "The voice didn't download. Check your Wi-Fi and tap Natural voice again.";
+  else st.textContent = 'A natural voice that runs on this phone. One-time download of about 90 MB.';
+  $('voiceExtra').hidden = mode === 'off';
+  const names = $('voiceNames'); names.innerHTML = ''; names.hidden = mode !== 'kokoro';
+  for (const [id, n, d] of KOKORO_VOICES) {
+    const b = document.createElement('button'); b.className = 'chip'; b.textContent = `${n} · ${d}`; b.setAttribute('aria-pressed', String((S.settings.voiceName || 'af_heart') === id));
+    b.onclick = () => { S.settings.voiceName = id; save(); renderVoice(); };
+    names.append(b);
+  }
+  $('sCute').value = S.settings.cute ?? 50;
+  $('voiceTest').disabled = mode === 'kokoro' && !ttsReady;
+}
+$('sCute').oninput = e => { S.settings.cute = Number(e.target.value); save(); };
+$('voiceTest').onclick = () => {
+  unlockAudio();
+  const keep = M().stage; if (keep !== 'adult' && keep !== 'juvenile') M().stage = 'adult';
+  say({ say: "Hiya! It's me, Nori. Do I sound cute? Be honest.", emotion: 'happy', action: 'wave' });
+  M().stage = keep;
+};
 function when(t) { return new Date(t).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); }
 function renderMind() {
   const tr = $('traits'); tr.innerHTML = '';
@@ -902,6 +993,7 @@ if (awayMs > 30 * 60000 && !S.settings.mindOn) setTimeout(() => say({ say: M().s
   }, rnd(6, 11) * 60000);
 })();
 
+if (S.settings.voice === 'kokoro' && S.settings.ttsOn) ttsStart();   // already downloaded: load the voice quietly
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 window.__nori = { P, B, S, say, event };
 </script>
