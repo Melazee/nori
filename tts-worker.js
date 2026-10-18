@@ -6,16 +6,14 @@ let tts = null, loading = null, loadedDtype = null, device = null;
 const opts = (dtype, dev) => ({ dtype, device: dev,
   progress_callback: (p) => { if (p && p.status === 'progress') self.postMessage({ type: 'progress', file: p.file, progress: p.progress, loaded: p.loaded, total: p.total }); } });
 async function tryLoad(dtype, dev) {
-  const t = await KokoroTTS.from_pretrained(MODEL, opts(dtype, dev));
-  // make sure it can actually speak before calling it ready
-  await t.generate('Hi.', { voice: 'af_bella' });
-  return t;
+  return KokoroTTS.from_pretrained(MODEL, opts(dtype, dev));
 }
 function load(dtype = 'fp32', forceWasm = false) {
   if (loading && loadedDtype === dtype && !forceWasm) return loading;
   loadedDtype = dtype; tts = null;
   // the phone's graphics chip speaks much faster; fall back to the normal processor if it can't
-  const gpu = !forceWasm && dtype === 'fp32' && self.navigator && self.navigator.gpu;
+  // (the graphics chip is busy running Nori's mind, so the voice uses the normal processor; it's reliable there)
+  const gpu = false && !forceWasm;
   loading = (async () => {
     let t = null;
     if (gpu) { try { t = await tryLoad(dtype, 'webgpu'); device = 'webgpu'; } catch (e) { console.warn('webgpu voice failed, using wasm', e); } }

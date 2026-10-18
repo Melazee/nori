@@ -886,7 +886,7 @@ function say(r, quiet) {
     if (i >= line.length) { clearInterval(typing); return; }
     const c = line[i], prev = line[i - 1] || ' ';
     lineEl.textContent += c;
-    if (!quiet && !real && /[aeiouy]/i.test(c) && !/[aeiouy]/i.test(prev) && Date.now() - last > 70) {
+    if (!quiet && !real && !(S.settings.voice === 'kokoro' && (M().stage === 'adult' || M().stage === 'juvenile')) && /[aeiouy]/i.test(c) && !/[aeiouy]/i.test(prev) && Date.now() - last > 70) {
       last = Date.now(); const rest = line.slice(i), q = rest.indexOf('?'); chirp(0, r.emotion, q >= 0 && q < 6);
     }
     i++;
@@ -906,7 +906,7 @@ form.addEventListener('submit', async e => {
   const slow = setTimeout(() => { if (waiting) { metaEl.hidden = false; metaEl.textContent = 'Thinking hard…'; } }, 7000);
   // words appear as Nori thinks of them; the voice starts on the first finished sentence
   const voiceMode = S.settings.voice, adultish = M().stage === 'adult' || M().stage === 'juvenile';
-  const useKokoro = voiceMode === 'kokoro' && ttsReady && adultish;
+  const useKokoro = voiceMode === 'kokoro' && ttsReady && adultish, voiceLoading = voiceMode === 'kokoro' && !ttsReady && adultish;
   let vs = null, spokenTo = 0, shownLen = 0, lastChirp = 0, started = false;
   const onSay = t => {
     if (!t) return;
@@ -914,6 +914,8 @@ form.addEventListener('submit', async e => {
     lineEl.textContent = t; placeBubble(); showBubble(0);
     if (useKokoro) {
       if (!spokenTo) { const m = t.match(/^[^.!?…]*[.!?…]+\s/); if (m && m[0].trim().length > 1) { vs = voiceSession(mood); vs.push(m[0], false); spokenTo = m[0].length; } }
+    } else if (voiceLoading) {
+      metaEl.hidden = false; metaEl.textContent = ttsLoading ? "Nori's voice is still loading…" : "Nori's voice isn't on. Check Settings.";
     } else if (S.settings.sound && !(voiceMode === 'phone' && adultish)) {
       for (let i = shownLen; i < t.length; i++) {
         if (/[aeiouy]/i.test(t[i]) && !/[aeiouy]/i.test(t[i - 1] || ' ') && Date.now() - lastChirp > 80) { lastChirp = Date.now(); chirp(0, mood, false); break; }
@@ -1038,7 +1040,7 @@ function renderVoice() {
   pr.hidden = true;
   if (mode === 'off') st.textContent = 'Nori talks in penguin chirps.';
   else if (mode === 'phone') st.textContent = "Your phone's built-in voice, pitched up. Works straight away.";
-  else if (ttsReady) st.textContent = `Natural voice ready${ttsDev === 'webgpu' ? ' (fast mode)' : ttsDev === 'wasm' ? ' (standard mode)' : ''}. Free, and it runs on this phone.`;
+  else if (ttsReady) st.textContent = 'Natural voice ready. Free, and it runs on this phone.';
   else if (ttsLoading) {
     const v = Object.values(ttsProg), got = v.reduce((a, x) => a + x[0], 0), tot = v.reduce((a, x) => a + x[1], 0);
     st.textContent = `Downloading Nori's voice… ${tot ? Math.round(got / 1048576) + ' of ' + Math.round(tot / 1048576) + ' MB' : ''}`;
