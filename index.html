@@ -908,12 +908,17 @@ form.addEventListener('submit', async e => {
   const voiceMode = S.settings.voice, adultish = M().stage === 'adult' || M().stage === 'juvenile';
   const useKokoro = voiceMode === 'kokoro' && ttsReady && adultish, voiceLoading = voiceMode === 'kokoro' && !ttsReady && adultish;
   let vs = null, spokenTo = 0, shownLen = 0, lastChirp = 0, started = false;
+  const reveal = txt => { lineEl.textContent = txt; placeBubble(); showBubble(6000 + txt.length * 70); };
   const onSay = t => {
     if (!t) return;
     if (!started) { started = true; metaEl.hidden = true; clearInterval(typing); }
-    lineEl.textContent = t; placeBubble(); showBubble(0);
     if (useKokoro) {
-      if (!spokenTo) { const m = t.match(/^[^.!?…]*[.!?…]+\s/); if (m && m[0].trim().length > 1) { vs = voiceSession(mood); vs.push(m[0], false); spokenTo = m[0].length; } }
+      // with the voice on, words appear the moment Nori says them (the dots stay up until then)
+      if (!spokenTo) { const m = t.match(/^[^.!?…]*[.!?…]+\s/); if (m && m[0].trim().length > 1) { vs = voiceSession(mood); const first = m[0]; vs.push(first, false, () => reveal(first)); spokenTo = first.length; } }
+      return;
+    }
+    lineEl.textContent = t; placeBubble(); showBubble(0);
+    if (false) {
     } else if (voiceLoading) {
       metaEl.hidden = false; metaEl.textContent = ttsLoading ? "Nori's voice is still loading…" : "Nori's voice isn't on. Check Settings.";
     } else if (S.settings.sound && !(voiceMode === 'phone' && adultish)) {
@@ -927,11 +932,17 @@ form.addEventListener('submit', async e => {
   clearTimeout(slow); waiting = false;
   B.fun = Math.min(100, B.fun + 6);
   if (!started) say(r);                       // basic brain, or nothing streamed: show it the usual way
-  else {
+  else if (useKokoro) {
+    emote(r.emotion, r.action);
+    const head = r.say.slice(0, spokenTo), rest = r.say.slice(spokenTo).trim();
+    vs = vs || voiceSession(r.emotion);
+    let shown = head.trimEnd();
+    for (const p of splitSpeech(rest)) { shown += (shown ? ' ' : '') + p.trim(); const now = shown; vs.push(p, true, () => reveal(now)); }
+    vs.done().then(() => { if (vs.failed()) reveal(r.say); });
+  } else {
     emote(r.emotion, r.action);
     lineEl.textContent = r.say; placeBubble(); showBubble(6000 + r.say.length * 70);
-    if (useKokoro) { const rest = r.say.slice(spokenTo).trim(); if (rest) { vs = vs || voiceSession(r.emotion); for (const p of splitSpeech(rest)) vs.push(p, true); } }
-    else if (voiceMode === 'phone' && adultish) speakReal(r.say, r.emotion);
+    if (voiceMode === 'phone' && adultish) speakReal(r.say, r.emotion);
   }
   setTimeout(() => { talking = false; }, 8000);
 });
