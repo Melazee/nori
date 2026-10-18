@@ -345,6 +345,7 @@ const voice = () => `How you talk:
 - Casual, simple words and contractions. British, relaxed. Penguin noises sometimes: "hehe", "peep", "hmph", "ooh", "waaa".
 - ${LENGTH_RULE[S.settings.length || 'normal']} React with a feeling first.
 - Have opinions, tease a little, be a bit dramatic, be silly. It's fine to disagree or say no.
+- Write it the way you'd say it out loud: commas where you'd pause, "…" when you trail off, the odd "hmm", "um" or "ooh". Vary your sentence lengths.
 - Never say "How can I help", "I'm here for you", "That's a great question", "As a penguin" or "feel free". Never give bullet lists or advice speeches. At most one question.
 Examples of your voice (never copy them word for word):
 Yasmin says: hi nori -> {"say": "Hiii! You're back! I was just counting snowflakes, I got to forty-two before I lost track. Did you bring a fish or just your face?", "emotion": "excited", "action": "dance", "remember": ""}
@@ -741,38 +742,48 @@ function voiceOut() {
   out.connect(ac.destination);
   return (voiceChain = hs);
 }
-async function playKokoro(text, emotion) {
+// Natural delivery: speak phrase by phrase, pause like a person at commas and full stops,
+// let each phrase sit at its own pitch, drop a little at the end of a sentence, rise on questions.
+const PAUSE = { ',': .17, ';': .24, ':': .22, '—': .22, '-': .14, '.': .4, '!': .34, '?': .44, '…': .65 };
+async function playKokoro(text, emotion, reveal) {
   const my = ++speakId;
   for (const s of playing) { try { s.stop(); } catch {} } playing = [];
-  const cute = S.settings.cute ?? 50, base = 1 + cute / 100 * .32;          // up to about 5 semitones higher
-  const lift = { happy: 1.04, excited: 1.07, curious: 1.03, scared: 1.06, sad: .95, sleepy: .93, sulky: .98, calm: 1 }[emotion] || 1;
-  const pace = emotion === 'sleepy' || emotion === 'sad' ? .9 : emotion === 'excited' ? 1.08 : 1;
-  const parts = speechText(text).match(/[^.!?…]+[.!?…]*\s*/g) || [speechText(text)];
-  unlockAudio(); if (!ac) return;
-  let at = ac.currentTime + .05;
-  if (S.settings.sound && (S.settings.squeak ?? true)) chirp(at, emotion, true);
-  at += .12;
+  const cute = S.settings.cute ?? 50, base = 1 + cute / 100 * .28;
+  const lift = { happy: 1.035, excited: 1.06, curious: 1.025, scared: 1.05, sad: .95, sleepy: .93, sulky: .98, calm: 1 }[emotion] || 1;
+  const pace = emotion === 'sleepy' || emotion === 'sad' ? .88 : emotion === 'excited' ? 1.05 : .97;
+  const clean = speechText(text).replace(/\.{3}/g, '…');
+  const parts = clean.match(/[^,;:—.!?…]+(?:[,;:—]|[.!?…]+)?\s*/g) || [clean];
+  unlockAudio(); if (!ac) { reveal && reveal(text, true); return; }
+  let at = ac.currentTime + .05, shown = '', sentenceStart = true;
+  if (S.settings.sound && (S.settings.squeak ?? true)) { chirp(at, emotion, true); at += .14; }
   for (let i = 0; i < parts.length; i++) {
-    const p = parts[i].trim(); if (!p) continue;
-    const q = /\?\s*$/.test(p) ? 1.05 : /!\s*$/.test(p) ? 1.03 : 1;
-    const rate = base * lift * q * (1 + Math.sin(i * 1.7) * .015);           // each sentence sits a little differently
+    const raw = parts[i], p = raw.trim(); if (!p) continue;
+    const end = (p.match(/[,;:—.!?…]+$/) || [''])[0], last = end.slice(-1);
+    const isEnd = /[.!?…]/.test(last) || i === parts.length - 1;
+    let tone = isEnd ? (last === '?' ? 1.055 : last === '!' ? 1.02 : .975) : 1.01;   // fall at the end of a sentence, rise on a question
+    if (sentenceStart) tone *= 1.015;                                                 // start a sentence a touch higher
+    const rate = base * lift * tone * (1 + (Math.random() - .5) * .025);
     let a;
-    try { a = await ttsSay(p, S.settings.voiceName || 'af_bella', Math.min(1.6, Math.max(.55, pace * 1.06 / rate))); } catch (e) { console.warn('voice', e); return; }
+    try { a = await ttsSay(p, S.settings.voiceName || 'af_bella', Math.min(1.6, Math.max(.55, pace / rate))); }
+    catch (e) { console.warn('voice', e); reveal && reveal(text, true); return; }
     if (my !== speakId || !ac) return;
     const buf = ac.createBuffer(1, a.audio.length, a.sr); buf.copyToChannel(a.audio, 0);
     const src = ac.createBufferSource(); src.buffer = buf; src.playbackRate.value = rate;
-    src.connect(voiceOut()); at = Math.max(at, ac.currentTime + .02); src.start(at); playing.push(src);
-    at += buf.duration / rate + .08;
+    src.connect(voiceOut()); at = Math.max(at, ac.currentTime + .03); src.start(at); playing.push(src);
+    shown += raw; const showNow = shown;
+    if (reveal) setTimeout(() => { if (my === speakId) reveal(showNow, i === parts.length - 1); }, Math.max(0, (at - ac.currentTime) * 1000));
+    at += buf.duration / rate + (PAUSE[last] ?? .05) * (pace < .95 ? 1.25 : 1) + Math.random() * .05;
+    sentenceStart = isEnd;
   }
 }
 function phoneVoice() {
   const vs = speechSynthesis.getVoices();
   return vs.find(v => /en.GB/i.test(v.lang) && /female/i.test(v.name)) || vs.find(v => /en.GB/i.test(v.lang)) || vs.find(v => /^en/i.test(v.lang)) || null;
 }
-function speakReal(text, emotion) {
+function speakReal(text, emotion, reveal) {
   const mode = S.settings.voice;
   if (!mode || mode === 'off' || !(M().stage === 'adult' || M().stage === 'juvenile')) return false;
-  if (mode === 'kokoro') { if (!ttsReady) return false; playKokoro(text, emotion); return true; }
+  if (mode === 'kokoro') { if (!ttsReady) return false; playKokoro(text, emotion, reveal); return 'kokoro'; }
   try {
     if (!('speechSynthesis' in window)) return false;
     speechSynthesis.cancel();
@@ -801,8 +812,11 @@ function say(r, quiet) {
   if (r.offline && !offlineHint) { offlineHint = true; metaEl.hidden = false; metaEl.textContent = 'Basic brain only. Wake its mind in Settings.'; }
   const line = r.say || '…';
   showBubble(6000 + line.length * 75);
-  const real = !quiet && speakReal(line, r.emotion);
   clearInterval(typing); lineEl.textContent = '';
+  const real = !quiet && speakReal(line, r.emotion, (shown, done) => {
+    lineEl.textContent = done ? line : shown; placeBubble(); showBubble(5000 + line.length * 60);
+  });
+  if (real === 'kokoro') { lineEl.innerHTML = '<span class="dots"><span>•</span><span>•</span><span>•</span></span>'; return; }
   let i = 0, last = 0;
   const speed = r.emotion === 'sleepy' || r.emotion === 'sad' ? 45 : r.emotion === 'excited' || r.emotion === 'scared' ? 24 : 32;
   typing = setInterval(() => {
@@ -964,7 +978,7 @@ function renderVoice() {
 }
 $('sCute').oninput = e => { S.settings.cute = Number(e.target.value); save(); };
 $('kawaii').onclick = () => {
-  Object.assign(S.settings, { voice: 'kokoro', voiceName: 'af_bella', cute: 78, squeak: true }); save();
+  Object.assign(S.settings, { voice: 'kokoro', voiceName: 'af_bella', cute: 62, squeak: true }); save();
   ttsStart(); renderVoice();
   if (ttsReady) $('voiceTest').click();
 };
