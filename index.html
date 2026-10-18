@@ -779,13 +779,23 @@ function voiceOut() {
 }
 // Natural delivery: speak phrase by phrase, pause like a person at commas and full stops,
 // let each phrase sit at its own pitch, drop a little at the end of a sentence, rise on questions.
-const PAUSE = { ',': .17, ';': .24, ':': .22, '—': .22, '-': .14, '.': .4, '!': .34, '?': .44, '…': .65 };
-function splitSpeech(text) {
-  const parts = [];
-  for (const sen of speechText(text).replace(/\.{3}/g, '…').match(/[^.!?…]+[.!?…]*\s*/g) || []) {
-    if (sen.split(/\s+/).length > 14) parts.push(...(sen.match(/[^,;:—]+[,;:—]?\s*/g) || [sen])); else parts.push(sen);
+const PAUSE = { '.': .32, '!': .3, '?': .36, '…': .5, ',': .15 };
+// whole sentences only (the voice pauses at commas by itself), grouped into chunks so it flows
+function splitSpeech(text, max = 220) {
+  const sens = speechText(text).replace(/\.{3}/g, '…').match(/[^.!?…]+[.!?…]*["')\]]*\s*/g) || [];
+  const out = [];
+  for (const sn of sens) {
+    if (out.length && (out[out.length - 1] + sn).length <= max) out[out.length - 1] += sn; else out.push(sn);
   }
-  return parts;
+  return out.filter(x => x.trim());
+}
+// the voice pads every clip with silence; cut it so only our own pauses remain
+function trimSilence(a, sr) {
+  const th = .012, keep = Math.round(sr * .035);
+  let s = 0, e = a.length - 1;
+  while (s < e && Math.abs(a[s]) < th) s++;
+  while (e > s && Math.abs(a[e]) < th) e--;
+  return a.subarray(Math.max(0, s - keep), Math.min(a.length, e + keep));
 }
 function voiceSession(emotion) {
   const my = ++speakId;
@@ -806,11 +816,11 @@ function voiceSession(emotion) {
     let a;
     try { a = await ttsSay(p, S.settings.voiceName || 'af_bella', Math.min(1.6, Math.max(.55, pace / rate))); } catch (e) { console.warn('voice', e); return; }
     if (my !== speakId || !ac) return;
-    const buf = ac.createBuffer(1, a.audio.length, a.sr); buf.copyToChannel(a.audio, 0);
+    const pcm = trimSilence(a.audio, a.sr), buf = ac.createBuffer(1, pcm.length, a.sr); buf.copyToChannel(pcm, 0);
     const src = ac.createBufferSource(); src.buffer = buf; src.playbackRate.value = rate;
     src.connect(voiceOut()); at = Math.max(at, ac.currentTime + .03); src.start(at); playing.push(src);
     if (onStart) setTimeout(() => { if (my === speakId) onStart(); }, Math.max(0, (at - ac.currentTime) * 1000));
-    at += buf.duration / rate + (PAUSE[last] ?? .05) * (pace < .95 ? 1.25 : 1) + Math.random() * .05;
+    at += buf.duration / rate + (PAUSE[last] ?? .12) * (pace < .95 ? 1.2 : 1) + Math.random() * .04;
     sentenceStart = isEnd;
   };
   return {
@@ -899,8 +909,7 @@ form.addEventListener('submit', async e => {
     if (!started) { started = true; metaEl.hidden = true; clearInterval(typing); }
     lineEl.textContent = t; placeBubble(); showBubble(0);
     if (useKokoro) {
-      const rest = t.slice(spokenTo), m = rest.match(/^[\s\S]*[.!?…]+\s/);
-      if (m) { vs = vs || voiceSession(mood); for (const p of splitSpeech(m[0])) vs.push(p, false); spokenTo += m[0].length; }
+      if (!spokenTo) { const m = t.match(/^[^.!?…]*[.!?…]+\s/); if (m && m[0].trim().length > 1) { vs = voiceSession(mood); vs.push(m[0], false); spokenTo = m[0].length; } }
     } else if (S.settings.sound && !(voiceMode === 'phone' && adultish)) {
       for (let i = shownLen; i < t.length; i++) {
         if (/[aeiouy]/i.test(t[i]) && !/[aeiouy]/i.test(t[i - 1] || ' ') && Date.now() - lastChirp > 80) { lastChirp = Date.now(); chirp(0, mood, false); break; }
