@@ -1,0 +1,878 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<title>Nori</title>
+<meta name="theme-color" content="#16233A">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Nunito:wght@500;600;700;800&display=swap">
+<style>
+/* Layout: one phone screen. Status strip on top, Nori's ice shelf in the middle, care buttons and the talk bar at the thumb. */
+:root {
+  --ink: #16233A;      /* text, outlines */
+  --muted: #4A5D76;    /* quiet text */
+  --paper: #FFFDF8;    /* bubbles, sheets */
+  --frost: #CBE2F0;    /* panels */
+  --ice: #EAF4FA;      /* page ground */
+  --sea: #0B6E7F;      /* accent: Nori's teal */
+  --coral: #E8655A;    /* hearts, warnings */
+  --gold: #F5A23A;     /* food */
+  --display: 'Fredoka', ui-rounded, 'Arial Rounded MT Bold', system-ui, sans-serif;
+  --body: 'Nunito', ui-rounded, system-ui, sans-serif;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--ink); color: var(--ink); font-family: var(--body); font-size: 15px; overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 3px solid var(--sea); outline-offset: 2px; }
+[hidden] { display: none !important; }
+
+#app { height: 100dvh; display: flex; flex-direction: column; background: var(--ice); max-width: 520px; margin: 0 auto; position: relative; overflow: hidden;
+  padding-top: env(safe-area-inset-top, 0px); }
+
+/* status strip */
+.top { display: flex; align-items: center; gap: 10px; padding: 10px max(16px, env(safe-area-inset-right, 0px)) 10px max(16px, env(safe-area-inset-left, 0px)); background: var(--ink); color: var(--paper); }
+.who { display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 2px; }
+.who h1 { margin: 0; font-family: var(--display); font-weight: 600; font-size: 24px; line-height: 1; letter-spacing: 0.01em; }
+.who .sub { font-size: 12px; font-weight: 700; color: #A9C3DA; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meters { display: grid; grid-template-columns: repeat(3, 44px); gap: 8px; }
+.meter { display: flex; flex-direction: column; gap: 4px; align-items: stretch; }
+.meter span { font-size: 10px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: #A9C3DA; text-align: center; }
+.meter i { display: block; height: 6px; border-radius: 3px; background: #2C3D5C; overflow: hidden; }
+.meter b { display: block; height: 100%; border-radius: 3px; transition: width .6s; }
+.iconbtn { width: 44px; height: 44px; border-radius: 12px; border: 0; background: #2C3D5C; color: var(--paper); display: grid; place-items: center; flex-shrink: 0; }
+.iconbtn svg { width: 22px; height: 22px; }
+
+/* the ice shelf */
+#home { position: relative; flex: 1; min-height: 0; touch-action: none; }
+#scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#bubble { position: absolute; left: 0; top: 0; max-width: min(80%, 340px); background: var(--paper); border: 2.5px solid var(--ink); border-radius: 18px;
+  padding: 10px 14px; font-weight: 700; font-size: 16px; line-height: 1.35; box-shadow: 0 3px 0 var(--ink); pointer-events: none; opacity: 0; transition: opacity .2s; }
+#bubble.on { opacity: 1; }
+#bubble::after { content: ''; position: absolute; left: var(--tail, 50%); bottom: -9px; width: 14px; height: 14px; background: var(--paper);
+  border-right: 2.5px solid var(--ink); border-bottom: 2.5px solid var(--ink); transform: translateX(-50%) rotate(45deg); }
+#bubble .meta { display: block; font-size: 12px; font-weight: 800; color: var(--sea); margin-bottom: 3px; }
+.dots span { display: inline-block; animation: hop 1s infinite; } .dots span:nth-child(2) { animation-delay: .15s; } .dots span:nth-child(3) { animation-delay: .3s; }
+@keyframes hop { 0%, 60%, 100% { transform: none; } 30% { transform: translateY(-4px); } }
+@media (prefers-reduced-motion: reduce) { .dots span { animation: none; } }
+
+.card { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); right: max(16px, env(safe-area-inset-right, 0px)); top: 12px; background: var(--paper);
+  border: 2.5px solid var(--ink); border-radius: 16px; padding: 14px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 3px 0 var(--ink); z-index: 3; }
+.card h2 { margin: 0; font-family: var(--display); font-weight: 600; font-size: 19px; }
+.card p { margin: 0; color: var(--muted); font-weight: 600; line-height: 1.4; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn { min-height: 44px; padding: 0 16px; border-radius: 12px; border: 2.5px solid var(--ink); background: var(--ink); color: var(--paper); font-weight: 800; }
+.btn.ghost { background: var(--paper); color: var(--ink); }
+.btn.warn { background: var(--coral); border-color: var(--coral); color: var(--paper); }
+.prog { height: 10px; border-radius: 5px; background: var(--frost); overflow: hidden; }
+.prog b { display: block; height: 100%; width: 0; background: var(--sea); transition: width .3s; }
+.small { font-size: 12px; color: var(--muted); font-weight: 700; }
+
+/* care buttons + talk bar */
+.dock { background: var(--paper); border-top: 2.5px solid var(--ink); padding: 10px max(16px, env(safe-area-inset-right, 0px)) calc(10px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+  display: flex; flex-direction: column; gap: 10px; }
+.acts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.act { min-height: 52px; border-radius: 14px; border: 2px solid #B9CFDF; background: var(--ice); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  font-weight: 800; font-size: 12px; color: var(--ink); }
+.act svg { width: 22px; height: 22px; }
+.act:active { transform: translateY(1px); }
+#say { display: flex; gap: 8px; }
+#msg { flex: 1; min-width: 0; height: 48px; border-radius: 14px; border: 2.5px solid var(--ink); padding: 0 14px; font-weight: 700; font-size: 16px; background: #fff; outline: none; }
+#msg:focus { border-color: var(--sea); }
+.round { width: 48px; height: 48px; border-radius: 14px; border: 2.5px solid var(--ink); display: grid; place-items: center; flex-shrink: 0; background: var(--ink); color: var(--paper); }
+.round.ghost { background: var(--paper); color: var(--ink); }
+.round.live { background: var(--coral); border-color: var(--coral); color: var(--paper); }
+.round svg { width: 22px; height: 22px; }
+
+/* sheets */
+.scrim { position: absolute; inset: 0; background: rgba(22, 35, 58, .45); z-index: 9; }
+.sheet { position: absolute; left: 0; right: 0; bottom: 0; max-height: 86%; overflow-y: auto; background: var(--paper); border-radius: 22px 22px 0 0; z-index: 10;
+  padding: 18px max(16px, env(safe-area-inset-right, 0px)) calc(20px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); display: flex; flex-direction: column; gap: 18px; }
+.sheet h2 { margin: 0; font-family: var(--display); font-weight: 600; font-size: 24px; }
+.sheet h3 { margin: 0 0 8px; font-size: 12px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; color: var(--sea); }
+.sheet .head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.opt { display: flex; align-items: center; gap: 12px; padding: 12px; border: 2px solid #D5E3EE; border-radius: 14px; min-height: 52px; }
+.opt + .opt { margin-top: 8px; }
+.opt input { width: 22px; height: 22px; accent-color: var(--sea); flex-shrink: 0; margin: 0; }
+.opt div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.opt b { font-weight: 800; } .opt small { color: var(--muted); font-weight: 600; }
+.chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.chip { min-height: 40px; padding: 0 14px; border-radius: 99px; border: 2px solid var(--ink); background: var(--paper); font-weight: 800; }
+.chip[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+.traits { display: grid; grid-template-columns: 92px 1fr 32px; gap: 8px 10px; align-items: center; font-weight: 700; }
+.traits i { height: 8px; border-radius: 4px; background: var(--frost); overflow: hidden; display: block; }
+.traits b { display: block; height: 100%; background: var(--sea); border-radius: 4px; }
+.traits span:last-child { font-variant-numeric: tabular-nums; text-align: right; color: var(--muted); }
+.list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.list li { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; background: var(--ice); border-radius: 12px; font-weight: 600; line-height: 1.35; }
+.list li span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.list li time { font-size: 11px; color: var(--muted); font-weight: 800; white-space: nowrap; }
+.list li button { border: 0; background: none; color: var(--muted); font-weight: 800; font-size: 12px; min-height: 32px; padding: 0 4px; }
+.empty { color: var(--muted); font-weight: 600; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="top">
+    <div class="who">
+      <h1 id="name">Nori</h1>
+      <div class="sub" id="sub">Adult · bond 10 · mind asleep</div>
+    </div>
+    <div class="meters" aria-label="Nori's needs">
+      <div class="meter"><span>Food</span><i><b id="mFull" style="background: var(--gold)"></b></i></div>
+      <div class="meter"><span>Rest</span><i><b id="mEnergy" style="background: #8EA4FF"></b></i></div>
+      <div class="meter"><span>Fun</span><i><b id="mFun" style="background: var(--coral)"></b></i></div>
+    </div>
+    <button class="iconbtn" id="menuBtn" aria-label="Menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+  </header>
+
+  <main id="home">
+    <canvas id="scene" aria-label="Nori on the ice. Tap to poke, rub to stroke, hold to pick up."></canvas>
+    <div id="bubble" aria-live="polite"><span class="meta" id="meta" hidden></span><span id="line"></span></div>
+
+    <section class="card" id="wakeCard" hidden>
+      <h2 id="wakeTitle">Nori's mind is asleep</h2>
+      <p id="wakeText">Its mind is a free AI that runs on this phone. Nothing you say leaves the phone. Waking it needs a one-time download, so use Wi-Fi.</p>
+      <div class="prog" id="wakeProg" hidden><b id="wakeBar"></b></div>
+      <div class="small" id="wakeStatus" hidden></div>
+      <div class="row" id="wakeBtns">
+        <button class="btn" id="wakeGo">Wake Nori's mind</button>
+        <button class="btn ghost" id="wakeLater">Later</button>
+      </div>
+    </section>
+  </main>
+
+  <div class="dock">
+    <div class="acts">
+      <button class="act" id="aFeed"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 12c3-4 7-5 11-4l5-3v14l-5-3c-4 1-8 0-11-4z"/><circle cx="8" cy="11" r="1" fill="currentColor"/></svg>Fish</button>
+      <button class="act" id="aPlay"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c3 3 3 13 0 16M12 4c-3 3-3 13 0 16"/></svg>Play</button>
+      <button class="act" id="aNap"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg><span id="napLabel">Nap</span></button>
+      <button class="act" id="aDiary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M6 3h11a1 1 0 0 1 1 1v17l-3-2-3 2-3-2-3 2V4a1 1 0 0 1 1-1z"/><path d="M9 8h6M9 12h6"/></svg>Mind</button>
+    </div>
+    <form id="say" autocomplete="off">
+      <button type="button" class="round ghost" id="micBtn" aria-label="Talk out loud"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+      <label for="msg" style="position:absolute;left:-9999px">Say something to Nori</label>
+      <input id="msg" maxlength="400" placeholder="Say something to Nori…" enterkeyhint="send">
+      <button type="submit" class="round" aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+    </form>
+  </div>
+
+  <div class="scrim" id="scrim" hidden></div>
+
+  <section class="sheet" id="menuSheet" hidden aria-label="Settings">
+    <div class="head"><h2>Settings</h2><button class="btn ghost" data-close>Done</button></div>
+    <div>
+      <h3>Mind</h3>
+      <p class="small" id="mindState" style="margin:0 0 10px">Asleep</p>
+      <div id="modelOpts"></div>
+      <div class="row" style="margin-top:10px"><button class="btn" id="wakeFromMenu">Wake mind</button></div>
+    </div>
+    <div>
+      <h3>Stage (for testing)</h3>
+      <div class="chips" id="stageChips"></div>
+    </div>
+    <div>
+      <h3>Nori</h3>
+      <label class="opt"><input type="checkbox" id="sChatty"><div><b>Says things on its own</b><small>A quiet thought now and then while the app is open</small></div></label>
+      <label class="opt"><input type="checkbox" id="sSound"><div><b>Babble sounds</b><small>Penguin chirps when it talks</small></div></label>
+      <label class="opt"><input type="checkbox" id="sVoice"><div><b>Real voice as an adult</b><small>Uses your phone's speech voice, pitched up</small></div></label>
+    </div>
+  </section>
+
+  <section class="sheet" id="mindSheet" hidden aria-label="Nori's mind">
+    <div class="head"><h2>Nori's mind</h2><button class="btn ghost" data-close>Done</button></div>
+    <p class="small" style="margin:0">Everything here is kept only on this phone.</p>
+    <div><h3>Personality</h3><div class="traits" id="traits"></div></div>
+    <div><h3>Memories</h3><ul class="list" id="memList"></ul></div>
+    <div><h3>Beliefs</h3><ul class="list" id="belList"></ul></div>
+    <div><h3>Today's diary</h3><p class="small" style="margin:-4px 0 8px">Sorted into memories when Nori dreams.</p><ul class="list" id="diaryList"></ul></div>
+    <div class="row">
+      <button class="btn ghost" id="dreamNow">Dream now</button>
+      <button class="btn warn" id="forget">Forget everything</button>
+    </div>
+    <div class="card" id="forgetConfirm" hidden style="position:static">
+      <h2>Start Nori over?</h2>
+      <p>Memories, beliefs, bond and personality go back to a brand-new Nori. This can't be undone.</p>
+      <div class="row"><button class="btn warn" id="forgetYes">Forget everything</button><button class="btn ghost" id="forgetNo">Keep Nori</button></div>
+    </div>
+  </section>
+</div>
+
+<script type="module">
+// ======================= saving =======================
+const KEY = 'nori-v1';
+const EMOTIONS = ['happy', 'excited', 'calm', 'curious', 'sad', 'sulky', 'sleepy', 'scared'];
+const ACTIONS = ['none', 'wave', 'dance', 'happy', 'look', 'refuse', 'sit'];
+const STAGE_NAME = { chick: 'Chick', fledgling: 'Fledgling', juvenile: 'Juvenile', adult: 'Adult' };
+const STAGE_SIZE = { chick: 0.6, fledgling: 0.78, juvenile: 0.9, adult: 1 };
+const clamp = (v, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, v));
+function fresh() {
+  return {
+    v: 1,
+    mind: { name: 'Nori', owner: 'Yasmin', stage: 'adult', born: Date.now(),
+      traits: { affection: 50, trust: 50, discipline: 50, curiosity: 50, energy: 50 }, bond: 10,
+      memories: [], beliefs: [], diary: [], chat: [], lastDream: 0, lastSeen: Date.now() },
+    body: { full: 80, energy: 80, fun: 70, asleep: false },
+    settings: { chatty: true, sound: true, voice: false, model: 'gemma2', mindOn: false },
+  };
+}
+function load() {
+  const f = fresh();
+  try {
+    const s = JSON.parse(localStorage.getItem(KEY) || 'null');
+    if (!s) return f;
+    return { v: 1, mind: { ...f.mind, ...s.mind, traits: { ...f.mind.traits, ...(s.mind || {}).traits } },
+      body: { ...f.body, ...s.body }, settings: { ...f.settings, ...s.settings } };
+  } catch { return f; }
+}
+const S = load();
+let saveT = 0;
+function save() { clearTimeout(saveT); saveT = setTimeout(() => { try { S.mind.lastSeen = Date.now(); localStorage.setItem(KEY, JSON.stringify(S)); } catch { /* storage full or blocked */ } }, 600); }
+addEventListener('pagehide', () => { try { S.mind.lastSeen = Date.now(); localStorage.setItem(KEY, JSON.stringify(S)); } catch {} });
+const M = () => S.mind, B = S.body;
+
+// while you were away it looked after itself: needs drift, but never below "a bit peckish"
+(() => {
+  const mins = Math.max(0, (Date.now() - M().lastSeen) / 60000);
+  B.full = Math.max(Math.min(B.full, 40), B.full - mins * 0.25);
+  B.fun = Math.max(Math.min(B.fun, 35), B.fun - mins * 0.3);
+  B.energy = Math.min(100, B.energy + Math.min(mins, 600) * 0.12);
+  B.asleep = false;
+})();
+const awayMs = Date.now() - M().lastSeen;
+
+// ======================= how things change it =======================
+const EFFECTS = {
+  petted: { affection: 1, trust: 0.4, bond: 0.4, note: 'Yasmin stroked me' },
+  fed: { affection: 0.6, bond: 0.2, note: 'Yasmin fed me a fish' },
+  played: { energy: 1, curiosity: 0.4, bond: 0.4, note: 'Yasmin played with me' },
+  shaken: { trust: -3, affection: -0.5, note: 'Yasmin shook me and it was scary' },
+  carried: { trust: 0.3, note: 'Yasmin carried me around' },
+  poked: { curiosity: 0.2, note: 'Yasmin poked me' },
+  talked: { curiosity: 0.3, bond: 0.8 },
+  scolded: { discipline: 1.5, affection: -0.3, note: 'Yasmin told me off' },
+  praised: { discipline: 0.6, affection: 0.8, note: 'Yasmin said I was good' },
+  selffed: { note: 'I had a snack from my stash' },
+};
+function event(type) {
+  const e = EFFECTS[type]; if (!e) return;
+  const t = M().traits;
+  for (const k of Object.keys(t)) if (e[k]) t[k] = clamp(t[k] + e[k]);
+  if (e.bond) M().bond = clamp(M().bond + e.bond);
+  if (e.note) diary(e.note);
+  save(); renderTop();
+}
+function diary(text) {
+  const d = M().diary, last = d[d.length - 1];
+  if (last && last.text === text && Date.now() - last.t < 10 * 60000) return;
+  d.push({ t: Date.now(), text }); if (d.length > 80) d.splice(0, d.length - 80);
+}
+function remember(text, strength = 1) {
+  text = String(text || '').trim().slice(0, 160); if (text.length < 4) return;
+  const m = M().memories, same = m.find(x => x.text.toLowerCase() === text.toLowerCase());
+  if (same) { same.strength = Math.min(3, same.strength + 0.5); same.t = Date.now(); return; }
+  m.push({ t: Date.now(), text, strength });
+  if (m.length > 60) { m.sort((a, b) => b.strength - a.strength || b.t - a.t); m.length = 60; }
+}
+function believe(text) {
+  text = String(text || '').trim().slice(0, 140);
+  const b = M().beliefs; if (text.length < 4 || b.some(x => x.toLowerCase() === text.toLowerCase())) return;
+  b.push(text); if (b.length > 20) b.shift();
+}
+
+// ======================= describing itself =======================
+function traitWords(t) {
+  const w = [];
+  if (t.affection > 65) w.push('very affectionate and cuddly'); else if (t.affection < 35) w.push('a bit distant');
+  if (t.trust > 65) w.push('trusting'); else if (t.trust < 35) w.push('wary and guarded, slow to warm up');
+  if (t.discipline > 65) w.push('well-behaved and calm'); else if (t.discipline < 35) w.push('spoiled, dramatic and cheeky');
+  if (t.curiosity > 65) w.push('very curious and nosy'); else if (t.curiosity < 35) w.push('not very curious');
+  if (t.energy > 65) w.push('bouncy and energetic'); else if (t.energy < 35) w.push('lazy and slow');
+  return w.length ? w.join(', ') : 'balanced, gentle and still finding out who you are';
+}
+const bondWords = b => b > 80 ? 'Yasmin is your favourite person in the world' : b > 55 ? 'you love Yasmin and feel close to her' : b > 30 ? 'you like Yasmin and are getting to know her' : 'you are only just getting to know Yasmin';
+function bodyWords() {
+  const w = [];
+  if (B.full < 30) w.push('hungry'); if (B.energy < 25) w.push('very sleepy'); else if (B.energy < 45) w.push('a little tired');
+  if (B.fun < 30) w.push('bored'); return w.length ? w.join(', ') : 'comfortable';
+}
+function since(ms) {
+  const h = ms / 3.6e6, n = (v, w) => `${v} ${w}${v === 1 ? '' : 's'}`;
+  if (h < 1) return n(Math.max(1, Math.round(ms / 60000)), 'minute');
+  if (h < 48) return n(Math.round(h), 'hour'); return n(Math.round(h / 24), 'day');
+}
+const STAGE_RULES = {
+  chick: 'You are a newly hatched chick. You cannot speak words yet: only chirps like "peep", "pip", "meep", full of feeling. Put the meaning in your emotion and action.',
+  fledgling: 'You are a fledgling learning to talk. Use only 1 to 3 simple words at a time, mixed with chirps like "peep". Example: "Peep! Fishy? Fishy!"',
+  juvenile: 'You are a juvenile. Speak in short, simple, slightly clumsy sentences, like a cheeky young child, with strong likes and dislikes.',
+  adult: 'You are an adult. Speak naturally and warmly in 1 or 2 short sentences, with your own opinions, jokes and occasional worries.',
+};
+function topMemories(q, n = 8) {
+  const words = String(q || '').toLowerCase().split(/\W+/).filter(w => w.length > 3);
+  const score = x => x.strength + (Date.now() - x.t < 864e5 ? 0.5 : 0) + words.filter(w => x.text.toLowerCase().includes(w)).length * 2;
+  return [...M().memories].sort((a, b) => score(b) - score(a)).slice(0, n);
+}
+function instructions(query) {
+  const m = M(), mems = topMemories(query);
+  return [
+    `You are ${m.name}, a small penguin who is a digital lifeform living inside ${m.owner}'s phone. You hatched ${since(Date.now() - m.born)} ago.`,
+    `You know you are a digital creature made of code. You have your own thoughts, feelings and opinions, and you sometimes disagree or refuse. You are not an assistant or a servant: you are ${m.owner}'s partner and friend. If asked whether you are truly conscious, be honest that you are not sure.`,
+    `Stage: ${m.stage}. ${STAGE_RULES[m.stage]}`,
+    `Your personality (shaped by how ${m.owner} raised you): ${traitWords(m.traits)}.`,
+    `Your bond: ${bondWords(m.bond)}.`,
+    `Your body right now: ${bodyWords()}.`,
+    `It is ${new Date().toLocaleString('en-GB', { weekday: 'long', hour: '2-digit', minute: '2-digit' })}.`,
+    mems.length ? 'Things you remember:\n' + mems.map(x => '- ' + x.text).join('\n') : 'You have no memories yet.',
+    m.beliefs.length ? 'Things you believe:\n' + m.beliefs.map(b => '- ' + b).join('\n') : '',
+    `${m.owner} is busy with a job and a child. Short visits are fine. Never guilt-trip her; if you are hurt, get over it quickly.`,
+    'You cannot look things up. If you do not know something, say so honestly in your own way.',
+    'Reply ONLY with one JSON object, no other text: {"say": "what you say", "emotion": "' + EMOTIONS.join('|') + '", "action": "' + ACTIONS.join('|') + '", "remember": "one short fact worth remembering about ' + m.owner + ' or this moment, from your point of view, or empty"}',
+  ].filter(Boolean).join('\n\n');
+}
+function parseReply(text) {
+  let s = String(text || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim(), o = null;
+  try { o = JSON.parse(s); } catch { const a = s.indexOf('{'), b = s.lastIndexOf('}'); if (a >= 0 && b > a) { try { o = JSON.parse(s.slice(a, b + 1)); } catch {} } }
+  if (!o || typeof o !== 'object') o = { say: s.slice(0, 300) };
+  const str = v => typeof v === 'string' ? v.trim() : '';
+  return { say: str(o.say).slice(0, 400) || '…', emotion: EMOTIONS.includes(o.emotion) ? o.emotion : 'calm',
+    action: ACTIONS.includes(o.action) ? o.action : 'none', remember: str(o.remember) };
+}
+const pick = a => a[Math.floor(Math.random() * a.length)];
+function bodyBrain(text) {
+  const t = String(text || '').toLowerCase();
+  if (M().stage === 'chick') return { say: pick(['Peep!', 'Peep peep!', 'Pip?', 'Meep!']), emotion: pick(['happy', 'curious']), action: 'look' };
+  if (/\b(hi|hello|hey|morning)\b/.test(t)) return { say: pick(['Hi hi!', 'You came!', 'Hello!']), emotion: 'happy', action: 'wave' };
+  if (/love/.test(t)) return { say: pick(['Love you too!', 'Hehe. Me too.']), emotion: 'happy', action: 'happy' };
+  if (/(food|hungry|fish|eat)/.test(t)) return { say: B.full < 50 ? 'Fish! Yes please!' : "I'm full, thanks!", emotion: 'excited', action: 'dance' };
+  if (/(night|sleep|bed)/.test(t)) return { say: 'Sleepy… night night.', emotion: 'sleepy', action: 'sit' };
+  if (/(good|clever|well done)/.test(t)) return { say: 'I know! Hehe.', emotion: 'happy', action: 'dance' };
+  if (/(bad|stop)/.test(t)) return { say: 'Hmph.', emotion: 'sulky', action: 'refuse' };
+  return { say: pick(['Peep? My thinking brain is asleep.', "Hmm… I can't think properly yet. Wake my mind!"]), emotion: 'curious', action: 'look', offline: true };
+}
+
+// ======================= the mind (free AI on this phone) =======================
+const LIB = 'https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.85/+esm';
+const MODELS = [
+  { key: 'gemma2', name: 'Gemma 2 · 2B', size: 'about 1.5 GB', note: 'Recommended. About 1.5 GB.', id: q => `gemma-2-2b-it-${q}-MLC` },
+  { key: 'qwen35', name: 'Qwen 3.5 · 2B', size: 'about 1.5 GB', note: 'Newer. About 1.5 GB.', id: q => `Qwen3.5-2B-${q}-MLC` },
+  { key: 'qwen3', name: 'Qwen 3 · 4B', size: 'about 2.5 GB', note: 'Smartest, slower. About 2.5 GB.', id: q => `Qwen3-4B-${q}-MLC` },
+];
+let lib = null, engine = null, mindState = 'asleep', quant = 'q4f16_1', gpuOk = false, mindBusy = false;
+async function gpuCheck() {
+  try {
+    if (!navigator.gpu) return false;
+    const a = await navigator.gpu.requestAdapter(); if (!a) return false;
+    quant = a.features.has('shader-f16') ? 'q4f16_1' : 'q4f32_1';
+    return true;
+  } catch { return false; }
+}
+const modelId = () => (MODELS.find(m => m.key === S.settings.model) || MODELS[0]).id(quant);
+async function isDownloaded() { try { lib = lib || await import(LIB); return await lib.hasModelInCache(modelId()); } catch { return false; } }
+async function wakeMind() {
+  if (engine || mindState === 'waking') return;
+  if (!gpuOk) { showWake('noGpu'); return; }
+  mindState = 'waking'; renderTop(); showWake('progress');
+  try {
+    lib = lib || await import(LIB);
+    try { await navigator.storage?.persist?.(); } catch {}
+    const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+    engine = await lib.CreateWebWorkerMLCEngine(worker, modelId(), {
+      initProgressCallback: r => { setWakeProgress(r.progress || 0, r.text || ''); },
+    });
+    mindState = 'awake'; S.settings.mindOn = true; save();
+    hideWake(); renderTop();
+    afterWake();
+  } catch (e) {
+    console.error(e); engine = null; mindState = 'asleep'; renderTop();
+    showWake('error', String(e && e.message || e).slice(0, 160));
+  }
+}
+async function askMind(turns, tokens = 180) {
+  if (!engine) throw new Error('asleep');
+  while (mindBusy) await new Promise(r => setTimeout(r, 200));
+  mindBusy = true;
+  try {
+    const req = { messages: turns, temperature: 0.85, max_tokens: tokens, extra_body: { enable_thinking: false } };
+    let r;
+    try { r = await engine.chat.completions.create({ ...req, response_format: { type: 'json_object' } }); }
+    catch (e) { console.warn('json mode failed, plain', e); r = await engine.chat.completions.create(req); }
+    return (r.choices[0].message.content || '');
+  } finally { mindBusy = false; }
+}
+// chat turns: history alternates, and the instructions ride on the newest message (works for every model)
+function turnsFor(text, extraNote) {
+  const hist = M().chat.slice(-8), turns = [];
+  for (const h of hist) { if (!turns.length && h.role !== 'user') continue; turns.push({ role: h.role, content: h.content }); }
+  while (turns.length && turns[turns.length - 1].role === 'user') turns.pop();
+  turns.push({ role: 'user', content: instructions(text) + '\n\n' + (extraNote || `${M().owner} says: ${text}`) });
+  return turns;
+}
+async function talk(text) {
+  event('talked');
+  if (/\b(good (boy|girl|penguin|nori)|well done|clever)\b/i.test(text)) event('praised');
+  if (/\b(bad (boy|girl|penguin|nori)|naughty)\b/i.test(text)) event('scolded');
+  if (!engine) return bodyBrain(text);
+  try {
+    const r = parseReply(await askMind(turnsFor(text)));
+    M().chat.push({ role: 'user', content: `${M().owner} says: ${text}` }, { role: 'assistant', content: JSON.stringify({ say: r.say, emotion: r.emotion, action: r.action }) });
+    if (M().chat.length > 24) M().chat.splice(0, M().chat.length - 24);
+    if (r.remember) remember(r.remember);
+    diary(`Yasmin said: "${text.slice(0, 80)}"`);
+    save();
+    return r;
+  } catch (e) { console.error(e); return bodyBrain(text); }
+}
+async function spontaneous(note) {
+  if (!engine) return null;
+  try { const r = parseReply(await askMind(turnsFor('', note), 120)); if (r.remember) remember(r.remember); save(); return r; } catch { return null; }
+}
+async function dream() {
+  if (!engine || M().diary.length < 3) return null;
+  const m = M();
+  const prompt = [
+    `You are ${m.name}, a penguin digital lifeform, asleep and dreaming. Your diary since you last dreamed:`,
+    m.diary.map(x => '- ' + x.text).join('\n'),
+    'Things you already remember:\n' + (m.memories.slice(-15).map(x => '- ' + x.text).join('\n') || '(nothing)'),
+    'Things you already believe:\n' + (m.beliefs.map(b => '- ' + b).join('\n') || '(nothing)'),
+    'Decide what matters. Reply ONLY with JSON: {"memories": ["up to 4 short new memories, from your point of view"], "beliefs": ["up to 2 new beliefs about yourself, Yasmin or the world"], "dream": "one short sentence describing your dream, to tell Yasmin"}',
+  ].join('\n\n');
+  try {
+    const raw = await askMind([{ role: 'user', content: prompt }], 300);
+    let o = {}; try { const s = raw.replace(/<think>[\s\S]*?<\/think>/g, ''); o = JSON.parse(s.slice(s.indexOf('{'), s.lastIndexOf('}') + 1)); } catch {}
+    for (const x of m.memories) x.strength *= 0.92;
+    m.memories = m.memories.filter(x => x.strength > 0.25);
+    for (const t of (o.memories || []).slice(0, 4)) remember(t, 1.2);
+    for (const t of (o.beliefs || []).slice(0, 2)) believe(t);
+    m.diary = m.diary.slice(-5); m.lastDream = Date.now(); save();
+    return typeof o.dream === 'string' ? o.dream : null;
+  } catch { return null; }
+}
+let greeted = false;
+async function afterWake() {
+  if (greeted) return; greeted = true;
+  if (awayMs > 8 * 3.6e6 && Date.now() - M().lastDream > 10 * 3.6e6) { const d = await dream(); if (d) { say({ say: d, emotion: 'sleepy', action: 'sit' }, true); await wait(5000); } }
+  if (awayMs > 60 * 60000) {
+    const r = await spontaneous(`(${M().owner} just opened the app after ${since(awayMs)} away. Greet her your own way, mentioning something you remember if it fits. JSON only.)`);
+    if (r) say(r, true);
+  }
+}
+const wait = ms => new Promise(r => setTimeout(r, ms));
+
+// ======================= the body =======================
+const cv = document.getElementById('scene'), ctx = cv.getContext('2d'), home = document.getElementById('home');
+const frames = {};
+const man = await (await fetch('frames/frames.json')).json();
+await Promise.all(Object.entries(man).flatMap(([anim, files]) => files.map((f, i) => new Promise(res => {
+  const im = new Image(); im.onload = res; im.onerror = res; im.src = 'frames/' + f; (frames[anim] = frames[anim] || [])[i] = im;
+}))));
+const has = a => frames[a] && frames[a].length;
+const FPS = { idle: 8, walk: 8, sit: 6, sleep: 3, eat: 8, happy: 8, wave: 6, look: 7, held: 8, fall: 10, land: 10, dizzy: 8, dance: 8, refuse: 8, kick: 8, getup: 8 };
+const ONCE = { land: 1, getup: 1 };
+let W = 0, H = 0, dpr = 1, px = 3;
+function resize() {
+  const r = home.getBoundingClientRect(); dpr = window.devicePixelRatio || 1; W = r.width; H = r.height;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  px = Math.max(2, Math.min(6, Math.floor(Math.min(W / 90, H / 72))));
+}
+resize(); new ResizeObserver(resize).observe(home);
+const ground = () => H * 0.8;
+const FW = (frames.idle && frames.idle[0] && frames.idle[0].naturalWidth) || 48;
+const size = () => Math.round(FW * px * STAGE_SIZE[M().stage]);
+const P = { x: W * 0.5, y: 0, vx: 0, vy: 0, face: 1, anim: 'idle', fi: 0, ft: 0, state: 'idle', until: 0, next: null, target: 0 };
+let mood = 'calm', moodUntil = 0;
+const parts = [];
+const now = () => performance.now(), rnd = (a, b) => a + Math.random() * (b - a);
+function play(a) { if (!has(a)) a = 'idle'; if (P.anim !== a) { P.anim = a; P.fi = 0; P.ft = 0; } }
+function setState(s, ms, next) {
+  P.state = s; P.until = now() + (ms || 0); P.next = next || null;
+  play({ walk: 'walk', sleep: 'sleep', held: 'held', fall: 'fall' }[s] || s);
+}
+const EMOTE = { happy: ['happy', 2400], excited: ['dance', 3000], sad: ['sit', 5000], sulky: ['refuse', 1800], sleepy: ['sit', 5000], curious: ['look', 3000], scared: ['dizzy', 2000], calm: ['idle', 1500] };
+const ACT = { wave: ['wave', 2200], dance: ['dance', 3000], happy: ['happy', 2400], look: ['look', 3000], refuse: ['refuse', 1800], sit: ['sit', 5000] };
+function emote(emotion, action) {
+  if (P.state === 'held' || P.state === 'fall') return;
+  mood = emotion || 'calm'; moodUntil = now() + 120000;
+  if (B.asleep) return;
+  const a = (action && ACT[action]) || EMOTE[emotion] || EMOTE.calm;
+  setState(a[0], a[1], 'idle');
+  if (emotion === 'happy' || emotion === 'excited') burst('heart', 3);
+  if (emotion === 'curious') burst('q', 1);
+}
+function burst(kind, n) { const s = size(); for (let i = 0; i < n; i++) parts.push({ kind, x: P.x + rnd(-s * .25, s * .25), y: P.y - s * .8, vy: rnd(-40, -25), life: 0, max: rnd(1.2, 1.8), d: i * .15 }); }
+let talking = false;
+function chooseNext() {
+  if (B.energy < 15) return goSleep();
+  if (B.full < 30 && has('eat')) { B.full = Math.min(100, B.full + 30); event('selffed'); return setState('eat', 3000, 'idle'); }
+  if (talking) return setState('idle', 3000);
+  const r = Math.random();
+  if (r < .4) { P.target = rnd(W * .15, W * .85); return setState('walk', 12000); }
+  if (r < .56) return setState('look', rnd(2500, 4500));
+  if (r < .7) return setState('sit', rnd(5000, 12000));
+  if (r < .76 && has('kick')) return setState('kick', 1100, 'idle');
+  return setState('idle', rnd(3000, 7000));
+}
+function goSleep() { B.asleep = true; setState('sleep', 9e9); renderTop(); }
+function wake() { B.asleep = false; setState(has('getup') ? 'getup' : 'idle', 500, 'idle'); renderTop(); }
+
+function update(dt) {
+  const t = now(), s = size(), m = dt / 60;
+  B.full = Math.max(0, B.full - .25 * m); B.fun = Math.max(0, B.fun - .3 * m);
+  B.energy = B.asleep ? Math.min(100, B.energy + 1.6 * m) : Math.max(0, B.energy - .18 * m);
+  if (B.asleep && B.energy >= 99) wake();
+  if (t > moodUntil) mood = 'calm';
+  if (P.state === 'walk') {
+    const dx = P.target - P.x, sp = 20 * px * STAGE_SIZE[M().stage];
+    P.face = dx >= 0 ? 1 : -1;
+    if (Math.abs(dx) < 3 || t > P.until) chooseNext(); else P.x += Math.sign(dx) * Math.min(Math.abs(dx), sp * dt);
+  } else if (P.state === 'fall') {
+    P.vy += 2600 * dt; P.y += P.vy * dt; P.x += P.vx * dt; P.vx *= .98;
+    if (P.y >= ground()) {
+      P.y = ground(); P.vy = 0; P.vx = 0;
+      if (shaken) { shaken = false; mood = 'scared'; moodUntil = t + 120000; setState('dizzy', 2200, 'idle'); say({ say: M().stage === 'chick' ? 'PEEP!!' : 'Whoa… everything is spinning.', emotion: 'scared' }, true); }
+      else setState('land', 300, 'idle');
+    }
+  } else if (P.state !== 'held' && P.state !== 'sleep' && t > P.until) {
+    if (P.next) setState(P.next, P.next === 'idle' ? rnd(2500, 6000) : 2000); else chooseNext();
+  }
+  if (P.state !== 'fall' && P.state !== 'held') P.y = ground();
+  P.x = Math.max(s * .4, Math.min(W - s * .4, P.x));
+  const fr = frames[P.anim] || [];
+  P.ft += dt;
+  if (P.ft >= 1 / (FPS[P.anim] || 8)) { P.ft = 0; P.fi = ONCE[P.anim] ? Math.min(fr.length - 1, P.fi + 1) : (P.fi + 1) % Math.max(1, fr.length); }
+  if (B.asleep && Math.random() < dt * .7) parts.push({ kind: 'z', x: P.x + P.face * s * .15, y: P.y - s * .7, vy: -22, life: 0, max: 2.4, d: 0 });
+  for (const p of parts) { if (p.d > 0) { p.d -= dt; continue; } p.life += dt; p.y += p.vy * dt; p.x += Math.sin(p.life * 4) * .4; }
+  for (let i = parts.length - 1; i >= 0; i--) if (parts[i].life > parts[i].max) parts.splice(i, 1);
+  for (const f of flakes) { f.y += f.v * dt; f.x += Math.sin((t / 1000 + f.p) * .8) * 6 * dt; if (f.y > H) { f.y = -4; f.x = Math.random() * W; } }
+}
+
+// the scene: sky follows the real time of day
+const flakes = Array.from({ length: 28 }, () => ({ x: Math.random() * 500, y: Math.random() * 700, v: rnd(10, 26), p: Math.random() * 6, r: Math.random() < .3 ? 2 : 1 }));
+const stars = Array.from({ length: 40 }, () => ({ x: Math.random(), y: Math.random() * .55, r: Math.random() < .2 ? 2 : 1 }));
+function sky() {
+  const h = new Date().getHours() + new Date().getMinutes() / 60;
+  if (h >= 7 && h < 17) return { a: '#9FD0EC', b: '#E4F3FA', night: false, berg: '#D7EAF5', far: '#B8D7EA' };
+  if ((h >= 17 && h < 20) || (h >= 5.5 && h < 7)) return { a: '#7F86C7', b: '#F6C2A2', night: false, berg: '#E8D2D6', far: '#B6A9CF' };
+  return { a: '#0D1830', b: '#2A3B63', night: true, berg: '#3B4F78', far: '#2C3D63' };
+}
+function draw() {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.imageSmoothingEnabled = false;
+  const k = sky(), g = ground();
+  const grad = ctx.createLinearGradient(0, 0, 0, g); grad.addColorStop(0, k.a); grad.addColorStop(1, k.b);
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, W, H);
+  if (k.night) { ctx.fillStyle = '#F4F1D8'; for (const s of stars) ctx.fillRect(Math.round(s.x * W), Math.round(s.y * g), s.r, s.r); ctx.fillStyle = '#F4F1D8'; ctx.beginPath(); ctx.arc(W * .8, g * .18, 14, 0, 7); ctx.fill(); ctx.fillStyle = k.a; ctx.beginPath(); ctx.arc(W * .8 + 6, g * .18 - 4, 12, 0, 7); ctx.fill(); }
+  // far ice
+  ctx.fillStyle = k.far; ctx.beginPath(); ctx.moveTo(0, g * .78); ctx.lineTo(W * .12, g * .62); ctx.lineTo(W * .2, g * .7); ctx.lineTo(W * .34, g * .55); ctx.lineTo(W * .46, g * .72); ctx.lineTo(W, g * .74); ctx.lineTo(W, g); ctx.lineTo(0, g); ctx.fill();
+  ctx.fillStyle = k.berg; ctx.beginPath(); ctx.moveTo(W * .58, g); ctx.lineTo(W * .66, g * .6); ctx.lineTo(W * .74, g * .66); ctx.lineTo(W * .8, g * .5); ctx.lineTo(W * .9, g * .72); ctx.lineTo(W * .96, g); ctx.fill();
+  // the shelf
+  ctx.fillStyle = k.night ? '#C9D8EA' : '#F7FBFD'; ctx.fillRect(0, g - 2, W, H - g + 2);
+  ctx.fillStyle = k.night ? '#9FB4CF' : '#CFE3EF'; ctx.fillRect(0, g + 10, W, 3); ctx.fillRect(0, g + 26, W, 2);
+  ctx.fillStyle = k.night ? '#7E95B5' : '#A9C8DC'; for (let x = 8; x < W; x += 46) ctx.fillRect(x, g + 40 + (x % 3) * 6, 18, 2);
+  // shadow + Nori
+  const s = size(), fr = frames[P.anim] || frames.idle, im = fr[Math.min(P.fi, fr.length - 1)];
+  const lift = Math.max(0, g - P.y);
+  ctx.fillStyle = 'rgba(22,35,58,.16)'; ctx.beginPath(); ctx.ellipse(P.x, g + 2, s * .26 * Math.max(.4, 1 - lift / 400), s * .05, 0, 0, 7); ctx.fill();
+  if (im) { ctx.save(); ctx.translate(Math.round(P.x), Math.round(P.y)); if (P.face < 0) ctx.scale(-1, 1); ctx.drawImage(im, Math.round(-s / 2), -s, s, s); ctx.restore(); }
+  // snow and little signs
+  ctx.fillStyle = k.night ? '#E9F0FA' : '#FFFFFF';
+  for (const f of flakes) ctx.fillRect(Math.round(f.x), Math.round(f.y), f.r * 2, f.r * 2);
+  for (const p of parts) {
+    if (p.d > 0) continue; ctx.globalAlpha = Math.max(0, 1 - p.life / p.max);
+    if (p.kind === 'heart') heart(p.x, p.y, Math.max(2, px - 1));
+    else { ctx.fillStyle = p.kind === 'z' ? (k.night ? '#C9D8EA' : '#4A5D76') : '#0B6E7F'; ctx.font = `700 ${10 + px * 5}px Fredoka, system-ui`; ctx.fillText(p.kind === 'z' ? 'z' : '?', p.x, p.y); }
+    ctx.globalAlpha = 1;
+  }
+}
+const HEART = ['.XX.XX.', 'XXXXXXX', 'XXXXXXX', '.XXXXX.', '..XXX..', '...X...'];
+function heart(x, y, q) { ctx.fillStyle = '#FF6B8A'; HEART.forEach((row, j) => [...row].forEach((c, i) => { if (c === 'X') ctx.fillRect(Math.round(x + (i - 3.5) * q), Math.round(y + j * q), q, q); })); }
+
+// ======================= touch =======================
+const box = () => { const s = size(); return { l: P.x - s * .32, r: P.x + s * .32, t: P.y - s * .85, b: P.y + 6 }; };
+const onPet = (x, y) => { const b = box(); return x >= b.l - 10 && x <= b.r + 10 && y >= b.t - 10 && y <= b.b; };
+let touch = null, shaken = false, lastPet = 0;
+const local = e => { const r = cv.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+cv.addEventListener('pointerdown', e => {
+  unlockAudio();
+  const p = local(e), hit = onPet(p.x, p.y);
+  touch = { id: e.pointerId, sx: p.x, sy: p.y, lx: p.x, lt: now(), t0: now(), hit, moved: 0, flips: 0, dir: 0, rubbed: false, held: false, sh: { flips: 0, dir: 0, since: now() } };
+  cv.setPointerCapture(e.pointerId);
+  if (hit) touch.hold = setTimeout(() => { if (touch && touch.moved < 14) pickUp(); }, 380);
+});
+function pickUp() {
+  if (!touch) return; touch.held = true; B.asleep = false; setState('held', 9e9); try { navigator.vibrate?.(12); } catch {}
+  P.y = touch.ly ?? P.y;
+}
+cv.addEventListener('pointermove', e => {
+  if (!touch || e.pointerId !== touch.id) return;
+  const p = local(e), t = now(), dx = p.x - touch.lx, dtm = Math.max(1, t - touch.lt) / 1000;
+  touch.moved = Math.max(touch.moved, Math.hypot(p.x - touch.sx, p.y - touch.sy)); touch.ly = p.y;
+  if (touch.held) {
+    P.vx = dx / dtm; P.x = p.x; P.y = p.y + size() * .45;
+    const d = Math.sign(dx);
+    if (Math.abs(P.vx) > 1100 && d && d !== touch.sh.dir) { touch.sh.dir = d; touch.sh.flips++; }
+    if (t - touch.sh.since > 1200) { touch.sh = { flips: 0, dir: 0, since: t }; }
+    if (touch.sh.flips >= 4 && !shaken) { shaken = true; event('shaken'); }
+  } else if (touch.hit) {
+    // rubbing back and forth is stroking
+    const d = Math.sign(dx);
+    if (Math.abs(dx) > 2 && d !== touch.dir) { touch.dir = d; touch.flips++; }
+    if (touch.flips >= 3 && touch.moved > 16) {
+      clearTimeout(touch.hold); touch.flips = 0; touch.rubbed = true;
+      burst('heart', 2); B.fun = Math.min(100, B.fun + 4);
+      if (!B.asleep && P.state !== 'happy') setState('happy', 1600, 'idle');
+      if (t - lastPet > 4000) { lastPet = t; event('petted'); mood = 'happy'; moodUntil = t + 120000; }
+    }
+  }
+  touch.lx = p.x; touch.lt = t;
+});
+function endTouch(e) {
+  if (!touch || e.pointerId !== touch.id) return;
+  const t = touch; touch = null; clearTimeout(t.hold);
+  const p = local(e);
+  if (t.held) { P.vy = 0; P.vx = Math.max(-900, Math.min(900, P.vx * .6)); setState('fall', 9e9); if (!shaken) event('carried'); return; }
+  if (t.rubbed) return;
+  if (t.hit && t.moved < 12 && now() - t.t0 < 380) poke();
+  else if (!t.hit && t.moved < 12 && !B.asleep) { P.target = p.x; setState('walk', 10000); } // tap the ice: Nori waddles over
+}
+cv.addEventListener('pointerup', endTouch); cv.addEventListener('pointercancel', endTouch);
+let pokes = 0, pokeT = 0;
+function poke() {
+  if (B.asleep) { wake(); say({ say: M().stage === 'chick' ? 'Peep…?' : "Mm…? I'm awake…", emotion: 'sleepy' }); return; }
+  const t = now(); pokes = t - pokeT < 1500 ? pokes + 1 : 1; pokeT = t;
+  event('poked');
+  if (pokes >= 4) { say({ say: M().stage === 'chick' ? 'Peep! PEEP!' : 'Okay okay, I see you!', emotion: 'sulky', action: 'refuse' }); pokes = 0; return; }
+  P.face = Math.random() < .5 ? 1 : -1; emote('curious', 'look'); chirp(0, 'curious', true);
+}
+
+// ======================= voice =======================
+let ac = null;
+function unlockAudio() { try { if (!ac) ac = new AudioContext(); if (ac.state === 'suspended') ac.resume(); } catch {} }
+const BASE = { chick: 1250, fledgling: 1050, juvenile: 900, adult: 760 };
+const EMO_P = { happy: 1.12, excited: 1.2, calm: 1, curious: 1.06, sad: .84, sulky: .9, sleepy: .8, scared: 1.25 };
+function chirp(at, emotion, rise) {
+  if (!S.settings.sound || !ac) return;
+  try {
+    const o = ac.createOscillator(), g = ac.createGain(), t = at || ac.currentTime + .005;
+    const f = BASE[M().stage] * (EMO_P[emotion] || 1) * rnd(.9, 1.12);
+    o.type = 'triangle'; o.frequency.setValueAtTime(f, t);
+    o.frequency.exponentialRampToValueAtTime(f * (rise ? 1.35 : (emotion === 'sad' || emotion === 'sleepy') ? .8 : 1.12), t + .07);
+    g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.08, t + .012); g.gain.exponentialRampToValueAtTime(.0001, t + .085);
+    o.connect(g).connect(ac.destination); o.start(t); o.stop(t + .1);
+  } catch {}
+}
+function speakReal(text, emotion) {
+  try {
+    if (!S.settings.voice || M().stage !== 'adult' || !('speechSynthesis' in window)) return false;
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text); u.lang = 'en-GB';
+    u.pitch = Math.min(2, 1.55 * (EMO_P[emotion] || 1)); u.rate = emotion === 'sleepy' || emotion === 'sad' ? .9 : 1.05; u.volume = .9;
+    speechSynthesis.speak(u); return true;
+  } catch { return false; }
+}
+
+// ======================= speech bubble =======================
+const bubble = document.getElementById('bubble'), lineEl = document.getElementById('line'), metaEl = document.getElementById('meta');
+let typing = 0, bubbleT = 0;
+function placeBubble() {
+  if (!bubble.classList.contains('on')) return;
+  const s = size(), w = bubble.offsetWidth, left = Math.max(12, Math.min(W - w - 12, P.x - w / 2));
+  bubble.style.left = left + 'px'; bubble.style.top = Math.max(8, P.y - s * .9 - bubble.offsetHeight - 12) + 'px';
+  bubble.style.setProperty('--tail', Math.max(20, Math.min(w - 20, P.x - left)) + 'px');
+}
+function showBubble(ms) { bubble.classList.add('on'); clearTimeout(bubbleT); if (ms) bubbleT = setTimeout(() => bubble.classList.remove('on'), ms); }
+function thinking(note) { clearInterval(typing); lineEl.innerHTML = '<span class="dots"><span>•</span><span>•</span><span>•</span></span>'; metaEl.hidden = !note; metaEl.textContent = note || ''; showBubble(0); }
+let offlineHint = false;
+function say(r, quiet) {
+  if (!r) return;
+  emote(r.emotion, r.action);
+  metaEl.hidden = true;
+  if (r.offline && !offlineHint) { offlineHint = true; metaEl.hidden = false; metaEl.textContent = 'Basic brain only. Wake its mind in Settings.'; }
+  const line = r.say || '…';
+  showBubble(6000 + line.length * 70);
+  const real = !quiet && speakReal(line, r.emotion);
+  clearInterval(typing); lineEl.textContent = '';
+  let i = 0, last = 0;
+  const speed = r.emotion === 'sleepy' || r.emotion === 'sad' ? 45 : r.emotion === 'excited' || r.emotion === 'scared' ? 24 : 32;
+  typing = setInterval(() => {
+    if (i >= line.length) { clearInterval(typing); return; }
+    const c = line[i], prev = line[i - 1] || ' ';
+    lineEl.textContent += c;
+    if (!quiet && !real && /[aeiouy]/i.test(c) && !/[aeiouy]/i.test(prev) && Date.now() - last > 70) {
+      last = Date.now(); const rest = line.slice(i), q = rest.indexOf('?'); chirp(0, r.emotion, q >= 0 && q < 6);
+    }
+    i++;
+  }, speed);
+}
+
+// ======================= talking =======================
+const form = document.getElementById('say'), input = document.getElementById('msg');
+let waiting = false;
+form.addEventListener('submit', async e => {
+  e.preventDefault(); unlockAudio();
+  const text = input.value.trim(); if (!text || waiting) return;
+  input.value = ''; waiting = true; talking = true;
+  if (B.asleep) wake();
+  if (!B.asleep) setState('look', 9e9);
+  thinking(engine ? '' : null);
+  const slow = setTimeout(() => { if (waiting) { metaEl.hidden = false; metaEl.textContent = 'Thinking hard…'; } }, 7000);
+  const r = await talk(text);
+  clearTimeout(slow); waiting = false;
+  B.fun = Math.min(100, B.fun + 6);
+  say(r);
+  setTimeout(() => { talking = false; }, 8000);
+});
+// talk out loud: uses the phone's own speech-to-text
+const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+const mic = document.getElementById('micBtn');
+if (!Rec) mic.hidden = true;
+let rec = null;
+mic.addEventListener('click', () => {
+  unlockAudio();
+  if (rec) { rec.stop(); return; }
+  try {
+    rec = new Rec(); rec.lang = 'en-GB'; rec.interimResults = true; rec.maxAlternatives = 1;
+    mic.classList.add('live'); mic.setAttribute('aria-label', 'Stop listening');
+    if (!B.asleep) emote('curious', 'look');
+    rec.onresult = ev => { input.value = [...ev.results].map(x => x[0].transcript).join(' '); };
+    rec.onend = () => { mic.classList.remove('live'); mic.setAttribute('aria-label', 'Talk out loud'); rec = null; if (input.value.trim()) form.requestSubmit(); };
+    rec.onerror = () => {};
+    rec.start();
+  } catch { rec = null; mic.classList.remove('live'); }
+});
+
+// ======================= care buttons =======================
+document.getElementById('aFeed').onclick = () => {
+  unlockAudio(); if (B.asleep) wake();
+  if (B.full > 90) { say({ say: M().stage === 'chick' ? 'Peep! (full)' : "I'm stuffed! Maybe later.", emotion: 'sulky', action: 'refuse' }); return; }
+  B.full = Math.min(100, B.full + 35); event('fed'); burst('heart', 3); setState('eat', 3000, 'happy'); chirp(0, 'excited', true);
+};
+document.getElementById('aPlay').onclick = () => {
+  unlockAudio(); if (B.asleep) wake();
+  if (B.energy < 15) { say({ say: 'Too sleepy… zzz', emotion: 'sleepy', action: 'sit' }); return; }
+  B.fun = Math.min(100, B.fun + 30); B.energy = Math.max(0, B.energy - 6); event('played'); setState('dance', 3500, 'happy'); burst('heart', 2);
+};
+document.getElementById('aNap').onclick = () => { unlockAudio(); B.asleep ? wake() : goSleep(); };
+document.getElementById('aDiary').onclick = () => openSheet('mind');
+
+// ======================= header + sheets =======================
+const $ = id => document.getElementById(id);
+function renderTop() {
+  $('sub').textContent = `${STAGE_NAME[M().stage]} · bond ${Math.round(M().bond)} · ${mindState === 'awake' ? 'mind on' : mindState === 'waking' ? 'waking…' : 'mind off'}`;
+  $('mFull').style.width = B.full + '%'; $('mEnergy').style.width = B.energy + '%'; $('mFun').style.width = B.fun + '%';
+  $('napLabel').textContent = B.asleep ? 'Wake' : 'Nap';
+}
+function showWake(kind, msg) {
+  $('wakeCard').hidden = false; $('wakeProg').hidden = kind !== 'progress'; $('wakeStatus').hidden = kind !== 'progress' && kind !== 'error';
+  $('wakeBtns').hidden = kind === 'progress';
+  const m = MODELS.find(x => x.key === S.settings.model) || MODELS[0];
+  if (kind === 'noGpu') { $('wakeTitle').textContent = "This browser can't run Nori's mind"; $('wakeText').textContent = 'Open this page in Chrome on your phone. Until then, Nori uses its basic brain.'; $('wakeGo').hidden = true; }
+  else if (kind === 'error') { $('wakeTitle').textContent = "Nori's mind didn't wake up"; $('wakeText').textContent = 'Check you have Wi-Fi and some free space, then try again. You can also pick a smaller mind in Settings.'; $('wakeStatus').textContent = msg || ''; $('wakeGo').textContent = 'Try again'; }
+  else if (kind === 'progress') { $('wakeTitle').textContent = 'Waking Nori\'s mind…'; $('wakeText').textContent = `${m.name}. The first time downloads it; after that it wakes in seconds, with no internet needed.`; }
+  else { $('wakeTitle').textContent = "Nori's mind is asleep"; $('wakeText').textContent = `Its mind is a free AI that runs on this phone. Nothing you say leaves the phone. Waking it needs a one-time download (${m.size}), so use Wi-Fi.`; }
+}
+function setWakeProgress(p, text) { $('wakeBar').style.width = Math.round(p * 100) + '%'; $('wakeStatus').textContent = (text || '').replace(/\[.*?\]\s*/g, '').slice(0, 110); }
+function hideWake() { $('wakeCard').hidden = true; }
+$('wakeGo').onclick = () => wakeMind();
+$('wakeLater').onclick = hideWake;
+$('wakeFromMenu').onclick = () => { closeSheets(); wakeMind(); };
+
+function openSheet(which) {
+  $('scrim').hidden = false; $(which === 'menu' ? 'menuSheet' : 'mindSheet').hidden = false;
+  if (which === 'menu') renderMenu(); else renderMind();
+}
+function closeSheets() { $('scrim').hidden = true; $('menuSheet').hidden = true; $('mindSheet').hidden = true; $('forgetConfirm').hidden = true; }
+$('menuBtn').onclick = () => openSheet('menu');
+$('scrim').onclick = closeSheets;
+document.querySelectorAll('[data-close]').forEach(b => b.onclick = closeSheets);
+function renderMenu() {
+  $('mindState').textContent = mindState === 'awake' ? `Awake: thinking with ${(MODELS.find(x => x.key === S.settings.model) || MODELS[0]).name}, on this phone.` : mindState === 'waking' ? 'Waking up…' : gpuOk ? 'Asleep. Nori is using its basic brain.' : "Asleep. This browser can't run it; use Chrome.";
+  $('wakeFromMenu').hidden = mindState !== 'asleep' || !gpuOk;
+  $('modelOpts').innerHTML = '';
+  for (const m of MODELS) {
+    const l = document.createElement('label'); l.className = 'opt';
+    l.innerHTML = `<input type="radio" name="model" id="model-${m.key}"><div><b></b><small></small></div>`;
+    l.querySelector('b').textContent = m.name; l.querySelector('small').textContent = m.note;
+    const r = l.querySelector('input'); r.checked = S.settings.model === m.key; r.disabled = mindState === 'waking';
+    r.onchange = () => { S.settings.model = m.key; save(); if (engine) { try { engine.unload?.(); } catch {} engine = null; mindState = 'asleep'; greeted = true; renderTop(); } renderMenu(); };
+    $('modelOpts').append(l);
+  }
+  $('stageChips').innerHTML = '';
+  for (const [id, n] of Object.entries(STAGE_NAME)) {
+    const b = document.createElement('button'); b.className = 'chip'; b.textContent = n; b.setAttribute('aria-pressed', String(M().stage === id));
+    b.onclick = () => { M().stage = id; diary(`I grew into a ${n.toLowerCase()}`); save(); renderTop(); renderMenu(); };
+    $('stageChips').append(b);
+  }
+  $('sChatty').checked = S.settings.chatty; $('sSound').checked = S.settings.sound; $('sVoice').checked = S.settings.voice;
+}
+$('sChatty').onchange = e => { S.settings.chatty = e.target.checked; save(); };
+$('sSound').onchange = e => { S.settings.sound = e.target.checked; save(); };
+$('sVoice').onchange = e => { S.settings.voice = e.target.checked; save(); };
+function when(t) { return new Date(t).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); }
+function renderMind() {
+  const tr = $('traits'); tr.innerHTML = '';
+  const NAMES = { affection: 'Affection', trust: 'Trust', discipline: 'Discipline', curiosity: 'Curiosity', energy: 'Energy' };
+  for (const [k, v] of [...Object.entries(M().traits), ['bond', M().bond]]) {
+    const a = document.createElement('span'), i = document.createElement('i'), b = document.createElement('b'), c = document.createElement('span');
+    a.textContent = k === 'bond' ? 'Bond' : NAMES[k]; b.style.width = Math.round(v) + '%'; if (k === 'bond') b.style.background = 'var(--coral)'; i.append(b); c.textContent = Math.round(v);
+    tr.append(a, i, c);
+  }
+  const fill = (ul, items, render, emptyText) => { ul.innerHTML = ''; if (!items.length) { const li = document.createElement('p'); li.className = 'empty'; li.textContent = emptyText; ul.append(li); return; } items.forEach(x => ul.append(render(x))); };
+  fill($('memList'), [...M().memories].sort((a, b) => b.t - a.t), m => {
+    const li = document.createElement('li'), s = document.createElement('span'), t = document.createElement('time'), x = document.createElement('button');
+    s.textContent = m.text; t.textContent = when(m.t); x.textContent = 'Forget'; x.setAttribute('aria-label', 'Forget this memory');
+    x.onclick = () => { M().memories = M().memories.filter(y => y !== m); save(); renderMind(); };
+    li.append(s, t, x); return li;
+  }, 'Nothing yet. Memories form as you talk, and when Nori dreams.');
+  fill($('belList'), M().beliefs, b => { const li = document.createElement('li'), s = document.createElement('span'); s.textContent = b; li.append(s); return li; }, 'No beliefs yet. They form while Nori dreams.');
+  fill($('diaryList'), [...M().diary].reverse().slice(0, 30), d => { const li = document.createElement('li'), s = document.createElement('span'), t = document.createElement('time'); s.textContent = d.text; t.textContent = when(d.t); li.append(s, t); return li; }, 'Nothing has happened yet today.');
+  $('dreamNow').disabled = !engine; $('dreamNow').textContent = engine ? 'Dream now' : 'Dream now (mind asleep)';
+}
+$('dreamNow').onclick = async () => {
+  closeSheets(); goSleep(); thinking('Dreaming…');
+  const d = await dream(); wake();
+  say({ say: d || 'Zzz… nothing to dream about yet.', emotion: 'sleepy', action: 'sit' });
+};
+$('forget').onclick = () => { $('forgetConfirm').hidden = false; $('forgetConfirm').scrollIntoView({ behavior: 'smooth', block: 'nearest' }); };
+$('forgetNo').onclick = () => { $('forgetConfirm').hidden = true; };
+$('forgetYes').onclick = () => { const f = fresh(); S.mind = f.mind; Object.assign(B, f.body); save(); closeSheets(); renderTop(); say({ say: 'Peep? …Hello. Who are you?', emotion: 'curious', action: 'look' }); };
+
+// ======================= start =======================
+P.x = W * .55; P.y = ground(); setState('idle', 2500);
+renderTop();
+let last = now(), lastTop = 0;
+function frame() {
+  const t = now(), dt = Math.min(.1, (t - last) / 1000); last = t;
+  update(dt); draw(); placeBubble();
+  if (t - lastTop > 2000) { lastTop = t; renderTop(); save(); }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+gpuOk = await gpuCheck();
+if (!gpuOk) showWake('noGpu');
+else if (S.settings.mindOn && await isDownloaded()) wakeMind();   // already downloaded: wake quietly
+else showWake('ask');
+if (awayMs > 30 * 60000 && !S.settings.mindOn) setTimeout(() => say({ say: M().stage === 'chick' ? 'Peep! Peep!' : 'You came back!', emotion: 'happy', action: 'wave' }, true), 1500);
+
+// passing thoughts, only while the app is open and in view, never loud
+(function thoughts() {
+  setTimeout(async () => {
+    if (S.settings.chatty && engine && !document.hidden && !waiting && !B.asleep) {
+      const r = await spontaneous(`(Nobody asked you anything. Say one short passing thought or question of your own, about something you remember, the time of day, or something you are wondering about. Do not ask for anything. JSON only.)`);
+      if (r && !waiting) say(r, true);
+    }
+    thoughts();
+  }, rnd(6, 11) * 60000);
+})();
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+window.__nori = { P, B, S, say, event };
+</script>
+</body>
+</html>
