@@ -2,29 +2,44 @@
 import { KokoroTTS } from 'https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/dist/kokoro.web.js';
 
 const MODEL = 'onnx-community/Kokoro-82M-v1.0-ONNX';
-let tts = null, loading = null, loadedDtype = null;
-function load(dtype = 'fp32') {
-  if (loading && loadedDtype === dtype) return loading;
+let tts = null, loading = null, loadedDtype = null, device = null;
+const opts = (dtype, dev) => ({ dtype, device: dev,
+  progress_callback: (p) => { if (p && p.status === 'progress') self.postMessage({ type: 'progress', file: p.file, progress: p.progress, loaded: p.loaded, total: p.total }); } });
+async function tryLoad(dtype, dev) {
+  const t = await KokoroTTS.from_pretrained(MODEL, opts(dtype, dev));
+  // make sure it can actually speak before calling it ready
+  await t.generate('Hi.', { voice: 'af_bella' });
+  return t;
+}
+function load(dtype = 'fp32', forceWasm = false) {
+  if (loading && loadedDtype === dtype && !forceWasm) return loading;
   loadedDtype = dtype; tts = null;
-  const opts = (device) => ({ dtype, device,
-    progress_callback: (p) => { if (p && p.status === 'progress') self.postMessage({ type: 'progress', file: p.file, progress: p.progress, loaded: p.loaded, total: p.total }); } });
-  // the phone's graphics chip speaks much faster; fall back to the normal processor if it isn't available
-  const gpu = dtype === 'fp32' && self.navigator && self.navigator.gpu;
-  loading = (gpu ? KokoroTTS.from_pretrained(MODEL, opts('webgpu')).catch(() => KokoroTTS.from_pretrained(MODEL, opts('wasm'))) : KokoroTTS.from_pretrained(MODEL, opts('wasm')))
-    .then((t) => { tts = t; self.postMessage({ type: 'ready' }); return t; });
+  // the phone's graphics chip speaks much faster; fall back to the normal processor if it can't
+  const gpu = !forceWasm && dtype === 'fp32' && self.navigator && self.navigator.gpu;
+  loading = (async () => {
+    let t = null;
+    if (gpu) { try { t = await tryLoad(dtype, 'webgpu'); device = 'webgpu'; } catch (e) { console.warn('webgpu voice failed, using wasm', e); } }
+    if (!t) { t = await tryLoad(dtype, 'wasm'); device = 'wasm'; }
+    tts = t; self.postMessage({ type: 'ready', device }); return t;
+  })();
+  loading.catch(() => { loading = null; });
   return loading;
 }
 self.onmessage = async ({ data }) => {
   try {
     if (data.type === 'load') { await load(data.dtype); return; }
     if (data.type === 'say') {
-      const t = await load(data.dtype || loadedDtype || 'fp32');
-      const a = await t.generate(data.text, { voice: data.voice || 'af_bella', speed: data.speed || 1 });
+      let t = await load(data.dtype || loadedDtype || 'fp32'), a;
+      try { a = await t.generate(data.text, { voice: data.voice || 'af_bella', speed: data.speed || 1 }); }
+      catch (e) {
+        if (device !== 'webgpu') throw e;
+        t = await load(loadedDtype, true); self.postMessage({ type: 'device', device });
+        a = await t.generate(data.text, { voice: data.voice || 'af_bella', speed: data.speed || 1 });
+      }
       const buf = a.audio;
       self.postMessage({ type: 'audio', id: data.id, audio: buf, sr: a.sampling_rate }, [buf.buffer]);
     }
   } catch (e) {
-    if (data.type === 'load') loading = null;
     self.postMessage({ type: 'error', id: data.id, message: String((e && e.message) || e).slice(0, 200) });
   }
 };

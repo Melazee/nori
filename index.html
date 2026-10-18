@@ -190,7 +190,7 @@ button { cursor: pointer; }
         <div class="chips" id="voiceNames"></div>
         <div class="chips" id="voiceQ"></div>
         <label class="opt" for="sCute"><div style="flex:1"><b>Cuteness</b><small>How high and squeaky Nori sounds</small><input type="range" id="sCute" min="0" max="100" step="5" style="width:100%; accent-color: var(--sea); margin-top:8px"></div></label>
-        <div class="row"><button class="btn ghost" id="voiceTest">Hear Nori</button></div>
+        <div class="row" style="align-items:center"><button class="btn ghost" id="voiceTest">Hear Nori</button><span class="small" id="voiceNote" aria-live="polite"></span></div>
       </div>
     </div>
     <div>
@@ -743,7 +743,7 @@ function chirp(at, emotion, rise) {
 }
 // ---- speaking voice: babble only, the phone's voice, or Kokoro (a natural voice model on the phone) ----
 const KOKORO_VOICES = [['af_bella', 'Bella', 'Bright'], ['af_sky', 'Sky', 'Young'], ['af_nicole', 'Nicole', 'Whispery'], ['af_heart', 'Heart', 'Warm'], ['bf_emma', 'Emma', 'British']];
-let ttsW = null, ttsReady = false, ttsLoading = false, ttsErr = '', ttsSeq = 0, ttsProg = {};
+let ttsW = null, ttsReady = false, ttsLoading = false, ttsErr = '', ttsSeq = 0, ttsProg = {}, ttsDev = '';
 const ttsWait = new Map();
 function ttsStart() {
   if (ttsW) return;
@@ -751,7 +751,8 @@ function ttsStart() {
   ttsW = new Worker(new URL('./tts-worker.js', import.meta.url), { type: 'module' });
   ttsW.onmessage = ({ data }) => {
     if (data.type === 'progress') { ttsProg[data.file] = [data.loaded || 0, data.total || 0]; renderVoice(); }
-    else if (data.type === 'ready') { ttsReady = true; ttsLoading = false; S.settings.ttsOn = true; save(); renderVoice(); }
+    else if (data.type === 'ready') { ttsReady = true; ttsLoading = false; ttsDev = data.device || ''; S.settings.ttsOn = true; save(); renderVoice(); }
+    else if (data.type === 'device') { ttsDev = data.device; renderVoice(); }
     else {
       const w = ttsWait.get(data.id); ttsWait.delete(data.id);
       if (w) (data.type === 'audio' ? w.res(data) : w.rej(data));
@@ -804,7 +805,7 @@ function voiceSession(emotion) {
   const cute = S.settings.cute ?? 50, base = 1 + cute / 100 * .28;
   const lift = { happy: 1.035, excited: 1.06, curious: 1.025, scared: 1.05, sad: .95, sleepy: .93, sulky: .98, calm: 1 }[emotion] || 1;
   const pace = emotion === 'sleepy' || emotion === 'sad' ? .88 : emotion === 'excited' ? 1.05 : .97;
-  let at = 0, sentenceStart = true, chain = Promise.resolve(), count = 0;
+  let at = 0, sentenceStart = true, chain = Promise.resolve(), count = 0, failed = false;
   const speak = async (raw, isLast, onStart) => {
     const p = raw.trim(); if (!p || my !== speakId || !ac) return;
     if (!at) { at = ac.currentTime + .05; if (S.settings.sound && (S.settings.squeak ?? true)) { chirp(at, emotion, true); at += .14; } }
@@ -814,7 +815,7 @@ function voiceSession(emotion) {
     if (sentenceStart) tone *= 1.015;
     const rate = base * lift * tone * (1 + (Math.random() - .5) * .025);
     let a;
-    try { a = await ttsSay(p, S.settings.voiceName || 'af_bella', Math.min(1.6, Math.max(.55, pace / rate))); } catch (e) { console.warn('voice', e); return; }
+    try { a = await ttsSay(p, S.settings.voiceName || 'af_bella', Math.min(1.6, Math.max(.55, pace / rate))); } catch (e) { console.warn('voice', e); failed = true; ttsErr = (e && e.message) || String(e); onStart && onStart(); return; }
     if (my !== speakId || !ac) return;
     const pcm = trimSilence(a.audio, a.sr), buf = ac.createBuffer(1, pcm.length, a.sr); buf.copyToChannel(pcm, 0);
     const src = ac.createBufferSource(); src.buffer = buf; src.playbackRate.value = rate;
@@ -826,14 +827,17 @@ function voiceSession(emotion) {
   return {
     push(text, isLast, onStart) { count++; chain = chain.then(() => speak(text, isLast, onStart)); },
     done: () => chain,
+    failed: () => failed,
   };
 }
 async function playKokoro(text, emotion, reveal) {
   const v = voiceSession(emotion), parts = splitSpeech(text);
-  if (!parts.length) { reveal && reveal(text, true); return; }
+  if (!parts.length) { reveal && reveal(text, true); return true; }
   let shown = '';
   parts.forEach((p, i) => { shown += p; const now = shown; v.push(p, i === parts.length - 1, reveal ? () => reveal(now, i === parts.length - 1) : null); });
   await v.done();
+  if (v.failed()) { reveal && reveal(text, true); return false; }
+  return true;
 }
 function phoneVoice() {
   const vs = speechSynthesis.getVoices();
@@ -1034,7 +1038,7 @@ function renderVoice() {
   pr.hidden = true;
   if (mode === 'off') st.textContent = 'Nori talks in penguin chirps.';
   else if (mode === 'phone') st.textContent = "Your phone's built-in voice, pitched up. Works straight away.";
-  else if (ttsReady) st.textContent = 'Natural voice ready. Free, and it runs on this phone.';
+  else if (ttsReady) st.textContent = `Natural voice ready${ttsDev === 'webgpu' ? ' (fast mode)' : ttsDev === 'wasm' ? ' (standard mode)' : ''}. Free, and it runs on this phone.`;
   else if (ttsLoading) {
     const v = Object.values(ttsProg), got = v.reduce((a, x) => a + x[0], 0), tot = v.reduce((a, x) => a + x[1], 0);
     st.textContent = `Downloading Nori's voice… ${tot ? Math.round(got / 1048576) + ' of ' + Math.round(tot / 1048576) + ' MB' : ''}`;
@@ -1056,7 +1060,7 @@ function renderVoice() {
   }
   $('kawaiiRow').hidden = mode === 'off';
   $('sCute').value = S.settings.cute ?? 50;
-  $('voiceTest').disabled = mode === 'kokoro' && !ttsReady;
+
 }
 $('sCute').oninput = e => { S.settings.cute = Number(e.target.value); save(); };
 $('kawaii').onclick = () => {
@@ -1064,12 +1068,28 @@ $('kawaii').onclick = () => {
   ttsStart(); renderVoice();
   if (ttsReady) $('voiceTest').click();
 };
-$('voiceTest').onclick = () => {
-  if (S.settings.voice === 'kokoro' && !ttsReady) return;
+const TEST_LINE = "Hiii! It's me, Nori! Do I sound cute? Hmm, be honest, okay? Hehe.";
+$('voiceTest').onclick = async () => {
+  const note = $('voiceNote'), mode = S.settings.voice || 'off';
   unlockAudio();
-  const keep = M().stage; if (keep !== 'adult' && keep !== 'juvenile') M().stage = 'adult';
-  say({ say: "Hiii! It's me, Nori! Do I sound cute? Be honest. Hehe.", emotion: 'happy', action: 'wave' });
-  M().stage = keep;
+  try { if (ac && ac.state !== 'running') await ac.resume(); } catch {}
+  if (!ac) { note.textContent = "Your phone blocked the sound. Tap again."; return; }
+  if (mode === 'kokoro') {
+    if (!ttsReady) { note.textContent = ttsLoading ? 'Still downloading the voice…' : 'Tap Natural voice first to download it.'; if (!ttsLoading) ttsStart(); return; }
+    note.textContent = 'Warming up…';
+    let started = false;
+    const ok = await playKokoro(TEST_LINE, 'happy', () => { if (!started) { started = true; note.textContent = 'Speaking…'; } });
+    if (ok === false) note.textContent = `The voice hit a problem: ${ttsErr || 'unknown'}. Try Smaller quality, or tell Claude.`;
+    else setTimeout(() => { if (note.textContent === 'Speaking…') note.textContent = ''; }, 6000);
+    return;
+  }
+  if (mode === 'phone') {
+    if (!('speechSynthesis' in window)) { note.textContent = "This browser has no phone voice."; return; }
+    const keep = M().stage; M().stage = 'adult'; speakReal(TEST_LINE, 'happy'); M().stage = keep;
+    note.textContent = ''; return;
+  }
+  const keepS = S.settings.sound; S.settings.sound = true; say({ say: TEST_LINE, emotion: 'happy', action: 'wave' }); S.settings.sound = keepS;
+  note.textContent = '';
 };
 function when(t) { return new Date(t).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); }
 function renderMind() {
