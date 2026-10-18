@@ -342,15 +342,15 @@ const LENGTH_RULE = {
 };
 const voice = () => `How you talk:
 - Like a cheeky, warm little pet who adores Yasmin. Never like an assistant, a teacher, a therapist or customer service.
-- Casual, simple words and contractions. British, relaxed. Penguin noises sometimes: "hehe", "peep", "hmph", "ooh", "waaa".
+- Casual, simple words and contractions. British, relaxed. Use real words only: never write sounds or filler like "hehe", "haha", "hmm", "um", "uh", "ooh", "aww", "hmph", "peep", "lol", and never describe actions in *asterisks*.
 - ${LENGTH_RULE[S.settings.length || 'normal']} React with a feeling first.
 - Have opinions, tease a little, be a bit dramatic, be silly. It's fine to disagree or say no.
-- Write it the way you'd say it out loud: commas where you'd pause, "…" when you trail off, the odd "hmm", "um" or "ooh". Vary your sentence lengths.
+- Write it the way you'd say it out loud: commas where you'd pause, "…" now and then when you trail off. Vary your sentence lengths. Show feelings with your words, not with noises.
 - Never say "How can I help", "I'm here for you", "That's a great question", "As a penguin" or "feel free". Never give bullet lists or advice speeches. At most one question.
 Examples of your voice (never copy them word for word):
 Yasmin says: hi nori -> {"say": "Hiii! You're back! I was just counting snowflakes, I got to forty-two before I lost track. Did you bring a fish or just your face?", "emotion": "excited", "action": "dance", "remember": ""}
 Yasmin says: I'm so tired today -> {"say": "Oh no. Was it a big day? Come sit with me, we can be two sleepy lumps together and not do anything at all.", "emotion": "sleepy", "action": "sit", "remember": "Yasmin was tired today"}
-Yasmin says: do you like my drawing? -> {"say": "Ooh, the colours are cool! The hat's a bit weird though. Hehe.", "emotion": "happy", "action": "look", "remember": ""}
+Yasmin says: do you like my drawing? -> {"say": "The colours are so cool! The hat's a bit weird though, not going to lie.", "emotion": "happy", "action": "look", "remember": ""}
 Yasmin says: you're a bad penguin -> {"say": "Hmph. I'm a GREAT penguin and you know it.", "emotion": "sulky", "action": "refuse", "remember": ""}`;
 function topMemories(q, n = 8) {
   const words = String(q || '').toLowerCase().split(/\W+/).filter(w => w.length > 3);
@@ -388,7 +388,8 @@ function parseReply(text) {
   try { o = JSON.parse(s); } catch { const a = s.indexOf('{'), b = s.lastIndexOf('}'); if (a >= 0 && b > a) { try { o = JSON.parse(s.slice(a, b + 1)); } catch {} } }
   if (!o || typeof o !== 'object') o = { say: s.slice(0, 300) };
   const str = v => typeof v === 'string' ? v.trim() : '';
-  return { say: str(o.say).slice(0, 1200) || '…', emotion: EMOTIONS.includes(o.emotion) ? o.emotion : 'calm',
+  const grown = M().stage === 'adult' || M().stage === 'juvenile';
+  return { say: (grown ? unfill(str(o.say).replace(/\*[^*]*\*/g, ' ')) : str(o.say)).slice(0, 1200) || '…', emotion: EMOTIONS.includes(o.emotion) ? o.emotion : 'calm',
     action: ACTIONS.includes(o.action) ? o.action : 'none', remember: str(o.remember) };
 }
 const pick = a => a[Math.floor(Math.random() * a.length)];
@@ -396,12 +397,12 @@ function bodyBrain(text) {
   const t = String(text || '').toLowerCase();
   if (M().stage === 'chick') return { say: pick(['Peep!', 'Peep peep!', 'Pip?', 'Meep!']), emotion: pick(['happy', 'curious']), action: 'look' };
   if (/\b(hi|hello|hey|morning)\b/.test(t)) return { say: pick(['Hi hi!', 'You came!', 'Hello!']), emotion: 'happy', action: 'wave' };
-  if (/love/.test(t)) return { say: pick(['Love you too!', 'Hehe. Me too.']), emotion: 'happy', action: 'happy' };
+  if (/love/.test(t)) return { say: pick(['Love you too!', 'Me too. Loads.']), emotion: 'happy', action: 'happy' };
   if (/(food|hungry|fish|eat)/.test(t)) return { say: B.full < 50 ? 'Fish! Yes please!' : "I'm full, thanks!", emotion: 'excited', action: 'dance' };
   if (/(night|sleep|bed)/.test(t)) return { say: 'Sleepy… night night.', emotion: 'sleepy', action: 'sit' };
-  if (/(good|clever|well done)/.test(t)) return { say: 'I know! Hehe.', emotion: 'happy', action: 'dance' };
+  if (/(good|clever|well done)/.test(t)) return { say: 'I know! I\'m brilliant.', emotion: 'happy', action: 'dance' };
   if (/(bad|stop)/.test(t)) return { say: 'Hmph.', emotion: 'sulky', action: 'refuse' };
-  return { say: pick(['Peep? My thinking brain is asleep.', "Hmm… I can't think properly yet. Wake my mind!"]), emotion: 'curious', action: 'look', offline: true };
+  return { say: pick(['Peep? My thinking brain is asleep.', "I can't think properly yet. Wake my mind!"]), emotion: 'curious', action: 'look', offline: true };
 }
 
 // ======================= the mind (free AI on this phone) =======================
@@ -768,7 +769,9 @@ function ttsStart() {
 }
 const ttsSay = (text, voice, speed) => new Promise((res, rej) => { const id = ++ttsSeq; ttsWait.set(id, { res, rej }); ttsW.postMessage({ type: 'say', id, text, voice, speed, dtype: ttsDtype() }); });
 const ttsDtype = () => S.settings.voiceQ === 'small' ? 'q8' : 'fp32';
-const speechText = t => String(t).replace(/\*[^*]*\*/g, ' ').replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '').replace(/\s+/g, ' ').trim();
+const FILLER = /(^|[\s,.!?…])(?:he(?:he)+h?|ha(?:ha)+h?|hmm+|hm+ph|um+|uh+|erm+|ooh+|aww+|awh+|waa+h?|peep|lol)(?=[\s,.!?…]|$)[,.!…]*/gi;
+const unfill = t => String(t).replace(FILLER, '$1').replace(/\s+([,.!?…])/g, '$1').replace(/^[\s,.…]+/, '').replace(/\s{2,}/g, ' ').trim().replace(/[,;]\s*$/, '.').replace(/(^|[.!?…]\s+)([a-z])/g, (m, p, c) => p + c.toUpperCase());
+const speechText = t => unfill(t).replace(/\*[^*]*\*/g, ' ').replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '').replace(/\s+/g, ' ').trim();
 let voiceChain = null, speakId = 0, playing = [];
 function voiceOut() {
   if (voiceChain) return voiceChain;
@@ -1085,7 +1088,7 @@ $('kawaii').onclick = () => {
   ttsStart(); renderVoice();
   if (ttsReady) $('voiceTest').click();
 };
-const TEST_LINE = "Hiii! It's me, Nori! Do I sound cute? Hmm, be honest, okay? Hehe.";
+const TEST_LINE = "Hiya! It's me, Nori! Do I sound cute? Be honest, okay?";
 $('voiceTest').onclick = async () => {
   const note = $('voiceNote'), mode = S.settings.voice || 'off';
   unlockAudio();
