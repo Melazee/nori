@@ -370,9 +370,12 @@ function stableInstructions() {
     `Your bond: ${bondWords(m.bond)}.`,
     m.beliefs.length ? 'Things you believe:\n' + m.beliefs.map(b => '- ' + b).join('\n') : '',
     `${m.owner} is busy with a job and a child. Short visits are fine. Never guilt-trip her; if you are hurt, get over it quickly.`,
-    'You cannot look things up. If you do not know something, say so honestly in your own way.',
+    `You know lots about the human world from living inside ${m.owner}'s phone: football and other sports, games, films, TV, music, food, animals, places, the internet and memes. Get references and jokes, and play along with them.`,
+    'You have favourites and strong opinions (a favourite football team, game, film, food, colour…). When asked, pick one straight away, commit to it and say why, in character. Never say you are just a penguin and do not know about it, and never refuse to pick.',
+    'When you pick a favourite or form an opinion, put it in "remember" (for example "My favourite football team is …") so you stay consistent. If something is in what you remember, stick to it.',
+    'You cannot check the internet, so for very recent news or exact facts you are unsure of, say so in your own way.',
     'Each message from Yasmin starts with a [Right now] note about the time, your body and what you remember. Use it naturally, never read it out.',
-    'Always reply with ONLY one JSON object, no other text: {"say": "what you say", "emotion": "' + EMOTIONS.join('|') + '", "action": "' + ACTIONS.join('|') + '", "remember": "one short fact worth remembering about ' + m.owner + ' or this moment, from your point of view, or empty"}',
+    'Always reply with ONLY one JSON object, no other text: {"say": "what you say", "emotion": "' + EMOTIONS.join('|') + '", "action": "' + ACTIONS.join('|') + '", "remember": "one short fact worth remembering about ' + m.owner + ', yourself (a favourite or opinion you just chose) or this moment, from your point of view, or empty"}',
   ].filter(Boolean).join('\n\n');
 }
 function stateNote(query) {
@@ -406,7 +409,8 @@ const LIB = 'https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.85/+esm';
 const MODELS = [
   { key: 'gemma2', name: 'Gemma 2 · 2B', size: 'about 1.5 GB', note: 'Recommended. About 1.5 GB.', id: q => `gemma-2-2b-it-${q}-MLC` },
   { key: 'qwen35', name: 'Qwen 3.5 · 2B', size: 'about 1.5 GB', note: 'Newer. About 1.5 GB.', id: q => `Qwen3.5-2B-${q}-MLC` },
-  { key: 'qwen3', name: 'Qwen 3 · 4B', size: 'about 2.5 GB', note: 'Smartest, slower. About 2.5 GB.', id: q => `Qwen3-4B-${q}-MLC` },
+  { key: 'qwen35b', name: 'Qwen 3.5 · 4B', size: 'about 2.5 GB', note: 'Knows the most and gets references. Slower. About 2.5 GB.', id: q => `Qwen3.5-4B-${q}-MLC` },
+  { key: 'qwen3', name: 'Qwen 3 · 4B', size: 'about 2.5 GB', note: 'Also smart, a bit older. About 2.5 GB.', id: q => `Qwen3-4B-${q}-MLC` },
 ];
 let lib = null, engine = null, mindState = 'asleep', quant = 'q4f16_1', gpuOk = false, mindBusy = false;
 async function gpuCheck() {
