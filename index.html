@@ -186,7 +186,9 @@ button { cursor: pointer; }
       <p class="small" id="voiceStatus" style="margin:10px 0 0"></p>
       <div class="prog" id="voiceProg" hidden style="margin-top:8px"><b id="voiceBar"></b></div>
       <div id="voiceExtra" style="margin-top:12px; display:flex; flex-direction:column; gap:12px">
+        <div class="row" id="kawaiiRow"><button class="btn" id="kawaii">Make it kawaii</button></div>
         <div class="chips" id="voiceNames"></div>
+        <div class="chips" id="voiceQ"></div>
         <label class="opt" for="sCute"><div style="flex:1"><b>Cuteness</b><small>How high and squeaky Nori sounds</small><input type="range" id="sCute" min="0" max="100" step="5" style="width:100%; accent-color: var(--sea); margin-top:8px"></div></label>
         <div class="row"><button class="btn ghost" id="voiceTest">Hear Nori</button></div>
       </div>
@@ -236,7 +238,7 @@ function fresh() {
       traits: { affection: 50, trust: 50, discipline: 50, curiosity: 50, energy: 50 }, bond: 10,
       memories: [], beliefs: [], diary: [], chat: [], lastDream: 0, lastSeen: Date.now() },
     body: { full: 80, energy: 80, fun: 70, asleep: false },
-    settings: { chatty: true, sound: true, voice: 'off', voiceName: 'af_heart', cute: 50, ttsOn: false, model: 'gemma2', mindOn: false, length: 'normal' },
+    settings: { chatty: true, sound: true, voice: 'off', voiceName: 'af_bella', cute: 70, voiceQ: 'best', squeak: true, ttsOn: false, model: 'gemma2', mindOn: false, length: 'normal' },
   };
 }
 function load() {
@@ -704,7 +706,7 @@ function chirp(at, emotion, rise) {
   } catch {}
 }
 // ---- speaking voice: babble only, the phone's voice, or Kokoro (a natural voice model on the phone) ----
-const KOKORO_VOICES = [['af_heart', 'Heart', 'Warm'], ['af_bella', 'Bella', 'Bright'], ['af_sky', 'Sky', 'Young'], ['af_nicole', 'Nicole', 'Soft'], ['bf_emma', 'Emma', 'British']];
+const KOKORO_VOICES = [['af_bella', 'Bella', 'Bright'], ['af_sky', 'Sky', 'Young'], ['af_nicole', 'Nicole', 'Whispery'], ['af_heart', 'Heart', 'Warm'], ['bf_emma', 'Emma', 'British']];
 let ttsW = null, ttsReady = false, ttsLoading = false, ttsErr = '', ttsSeq = 0, ttsProg = {};
 const ttsWait = new Map();
 function ttsStart() {
@@ -721,22 +723,47 @@ function ttsStart() {
     }
   };
   ttsW.onerror = () => { ttsLoading = false; ttsErr = "The voice couldn't load."; try { ttsW.terminate(); } catch {} ttsW = null; renderVoice(); };
-  ttsW.postMessage({ type: 'load' });
+  ttsW.postMessage({ type: 'load', dtype: ttsDtype() });
 }
-const ttsSay = (text, voice, speed) => new Promise((res, rej) => { const id = ++ttsSeq; ttsWait.set(id, { res, rej }); ttsW.postMessage({ type: 'say', id, text, voice, speed }); });
+const ttsSay = (text, voice, speed) => new Promise((res, rej) => { const id = ++ttsSeq; ttsWait.set(id, { res, rej }); ttsW.postMessage({ type: 'say', id, text, voice, speed, dtype: ttsDtype() }); });
+const ttsDtype = () => S.settings.voiceQ === 'small' ? 'q8' : 'fp32';
 const speechText = t => String(t).replace(/\*[^*]*\*/g, ' ').replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '').replace(/\s+/g, ' ').trim();
-let curSrc = null;
+let voiceChain = null, speakId = 0, playing = [];
+function voiceOut() {
+  if (voiceChain) return voiceChain;
+  // brighten and smooth: a gentle lift up top, the harsh fizz rolled off, and a little room
+  const hs = ac.createBiquadFilter(); hs.type = 'highshelf'; hs.frequency.value = 3200; hs.gain.value = 3;
+  const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 9500; lp.Q.value = .4;
+  const comp = ac.createDynamicsCompressor(); comp.threshold.value = -16; comp.ratio.value = 3;
+  const dry = ac.createGain(), wet = ac.createGain(), dl = ac.createDelay(), fb = ac.createGain(), out = ac.createGain();
+  dl.delayTime.value = .045; fb.gain.value = .18; wet.gain.value = .12; dry.gain.value = 1; out.gain.value = 1.1;
+  hs.connect(lp).connect(comp); comp.connect(dry).connect(out); comp.connect(dl); dl.connect(fb).connect(dl); dl.connect(wet).connect(out);
+  out.connect(ac.destination);
+  return (voiceChain = hs);
+}
 async function playKokoro(text, emotion) {
-  const cute = S.settings.cute ?? 50, rate = 1 + cute / 100 * .26;          // pitch it up a little…
-  const pace = emotion === 'sleepy' || emotion === 'sad' ? .9 : emotion === 'excited' ? 1.1 : 1;
-  try {
-    const a = await ttsSay(speechText(text), S.settings.voiceName || 'af_heart', Math.max(.5, pace / rate)); // …and slow the words to match, so only the pitch changes
-    unlockAudio(); if (!ac) return;
+  const my = ++speakId;
+  for (const s of playing) { try { s.stop(); } catch {} } playing = [];
+  const cute = S.settings.cute ?? 50, base = 1 + cute / 100 * .32;          // up to about 5 semitones higher
+  const lift = { happy: 1.04, excited: 1.07, curious: 1.03, scared: 1.06, sad: .95, sleepy: .93, sulky: .98, calm: 1 }[emotion] || 1;
+  const pace = emotion === 'sleepy' || emotion === 'sad' ? .9 : emotion === 'excited' ? 1.08 : 1;
+  const parts = speechText(text).match(/[^.!?…]+[.!?…]*\s*/g) || [speechText(text)];
+  unlockAudio(); if (!ac) return;
+  let at = ac.currentTime + .05;
+  if (S.settings.sound && (S.settings.squeak ?? true)) chirp(at, emotion, true);
+  at += .12;
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i].trim(); if (!p) continue;
+    const q = /\?\s*$/.test(p) ? 1.05 : /!\s*$/.test(p) ? 1.03 : 1;
+    const rate = base * lift * q * (1 + Math.sin(i * 1.7) * .015);           // each sentence sits a little differently
+    let a;
+    try { a = await ttsSay(p, S.settings.voiceName || 'af_bella', Math.min(1.6, Math.max(.55, pace * 1.06 / rate))); } catch (e) { console.warn('voice', e); return; }
+    if (my !== speakId || !ac) return;
     const buf = ac.createBuffer(1, a.audio.length, a.sr); buf.copyToChannel(a.audio, 0);
-    try { curSrc?.stop(); } catch {}
-    const src = ac.createBufferSource(), g = ac.createGain(); src.buffer = buf; src.playbackRate.value = rate; g.gain.value = 1;
-    src.connect(g).connect(ac.destination); src.start(); curSrc = src;
-  } catch (e) { console.warn('voice', e); }
+    const src = ac.createBufferSource(); src.buffer = buf; src.playbackRate.value = rate;
+    src.connect(voiceOut()); at = Math.max(at, ac.currentTime + .02); src.start(at); playing.push(src);
+    at += buf.duration / rate + .08;
+  }
 }
 function phoneVoice() {
   const vs = speechSynthesis.getVoices();
@@ -917,7 +944,7 @@ function renderVoice() {
     st.textContent = `Downloading Nori's voice… ${tot ? Math.round(got / 1048576) + ' of ' + Math.round(tot / 1048576) + ' MB' : ''}`;
     pr.hidden = !tot; $('voiceBar').style.width = tot ? Math.round(got / tot * 100) + '%' : '0';
   } else if (ttsErr) st.textContent = "The voice didn't download. Check your Wi-Fi and tap Natural voice again.";
-  else st.textContent = 'A natural voice that runs on this phone. One-time download of about 90 MB.';
+  else st.textContent = `A natural voice that runs on this phone. One-time download of about ${S.settings.voiceQ === 'small' ? 90 : 330} MB, so use Wi-Fi.`;
   $('voiceExtra').hidden = mode === 'off';
   const names = $('voiceNames'); names.innerHTML = ''; names.hidden = mode !== 'kokoro';
   for (const [id, n, d] of KOKORO_VOICES) {
@@ -925,14 +952,27 @@ function renderVoice() {
     b.onclick = () => { S.settings.voiceName = id; save(); renderVoice(); };
     names.append(b);
   }
+  const vq = $('voiceQ'); vq.innerHTML = ''; vq.hidden = mode !== 'kokoro';
+  for (const [id, n] of [['best', 'Best quality · 330 MB'], ['small', 'Smaller · 90 MB']]) {
+    const b = document.createElement('button'); b.className = 'chip'; b.textContent = n; b.setAttribute('aria-pressed', String((S.settings.voiceQ || 'best') === id));
+    b.onclick = () => { if ((S.settings.voiceQ || 'best') === id) return; S.settings.voiceQ = id; save(); if (ttsW) { ttsReady = false; ttsLoading = true; ttsProg = {}; ttsW.postMessage({ type: 'load', dtype: ttsDtype() }); } renderVoice(); };
+    vq.append(b);
+  }
+  $('kawaiiRow').hidden = mode === 'off';
   $('sCute').value = S.settings.cute ?? 50;
   $('voiceTest').disabled = mode === 'kokoro' && !ttsReady;
 }
 $('sCute').oninput = e => { S.settings.cute = Number(e.target.value); save(); };
+$('kawaii').onclick = () => {
+  Object.assign(S.settings, { voice: 'kokoro', voiceName: 'af_bella', cute: 78, squeak: true }); save();
+  ttsStart(); renderVoice();
+  if (ttsReady) $('voiceTest').click();
+};
 $('voiceTest').onclick = () => {
+  if (S.settings.voice === 'kokoro' && !ttsReady) return;
   unlockAudio();
   const keep = M().stage; if (keep !== 'adult' && keep !== 'juvenile') M().stage = 'adult';
-  say({ say: "Hiya! It's me, Nori. Do I sound cute? Be honest.", emotion: 'happy', action: 'wave' });
+  say({ say: "Hiii! It's me, Nori! Do I sound cute? Be honest. Hehe.", emotion: 'happy', action: 'wave' });
   M().stage = keep;
 };
 function when(t) { return new Date(t).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); }
