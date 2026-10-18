@@ -227,7 +227,7 @@ button { cursor: pointer; }
 // ======================= saving =======================
 const KEY = 'nori-v1';
 const EMOTIONS = ['happy', 'excited', 'calm', 'curious', 'sad', 'sulky', 'sleepy', 'scared'];
-const ACTIONS = ['none', 'wave', 'dance', 'happy', 'look', 'refuse', 'sit'];
+const ACTIONS = ['none', 'wave', 'dance', 'happy', 'look', 'refuse', 'sit', 'jump', 'spin'];
 const STAGE_NAME = { chick: 'Chick', fledgling: 'Fledgling', juvenile: 'Juvenile', adult: 'Adult' };
 const STAGE_SIZE = { chick: 0.6, fledgling: 0.78, juvenile: 0.9, adult: 1 };
 const clamp = (v, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, v));
@@ -281,6 +281,7 @@ const EFFECTS = {
   scolded: { discipline: 1.5, affection: -0.3, note: 'Yasmin told me off' },
   praised: { discipline: 0.6, affection: 0.8, note: 'Yasmin said I was good' },
   selffed: { note: 'I had a snack from my stash' },
+  obeyed: { discipline: 0.4, bond: 0.2 },
 };
 function event(type) {
   const e = EFFECTS[type]; if (!e) return;
@@ -375,6 +376,7 @@ function stableInstructions() {
     'When you pick a favourite or form an opinion, put it in "remember" (for example "My favourite football team is …") so you stay consistent. If something is in what you remember, stick to it.',
     'You cannot check the internet, so for very recent news or exact facts you are unsure of, say so in your own way.',
     'Each message from Yasmin starts with a [Right now] note about the time, your body and what you remember, and a [Just now] note with the last thing you each said. Use them naturally, never read them out.',
+    'Sometimes Yasmin asks you to do things (jump, dance, sleep…). Your body reacts first, and a [You just] note tells you whether you did it or refused and why. Talk about it in character, and never claim the opposite of what the note says.',
     'This is one flowing conversation. Always follow on from what you were just talking about: if Yasmin says "why?", "that one", "them", "and you?" or anything short, it is about the last topic. Answer it directly and keep the thread going.',
     'Always reply with ONLY one JSON object, no other text: {"say": "what you say", "emotion": "' + EMOTIONS.join('|') + '", "action": "' + ACTIONS.join('|') + '", "remember": "one short fact worth remembering about ' + m.owner + ', yourself (a favourite or opinion you just chose) or this moment, from your point of view, or empty"}',
   ].filter(Boolean).join('\n\n');
@@ -498,13 +500,13 @@ function recap() {
   const cut = (t, n) => t.length > n ? t.slice(0, n) + '…' : t;
   return `\n[Just now: ${said ? `${M().owner} said "${cut(said, 160)}". ` : ''}You said "${cut(you, 200)}".]`;
 }
-async function talk(text, onSay) {
+async function talk(text, onSay, note) {
   event('talked');
   if (/\b(good (boy|girl|penguin|nori)|well done|clever)\b/i.test(text)) event('praised');
   if (/\b(bad (boy|girl|penguin|nori)|naughty)\b/i.test(text)) event('scolded');
-  if (!engine) return bodyBrain(text);
+  if (!engine) return note ? cmdReply(note) : bodyBrain(text);
   try {
-    const uc = `${stateNote(text)}${recap()}\n\n${M().owner} says: ${text}`;
+    const uc = `${stateNote(text)}${recap()}${note ? `\n[You just ${note.text}]` : ''}\n\n${M().owner} says: ${text}`;
     const raw = await askMind(convFor(uc), { onSay });
     const r = parseReply(raw);
     M().conv.push({ role: 'user', content: uc }, { role: 'assistant', content: raw });
@@ -512,7 +514,7 @@ async function talk(text, onSay) {
     diary(`Yasmin said: "${text.slice(0, 80)}"`);
     save();
     return r;
-  } catch (e) { console.error(e); return bodyBrain(text); }
+  } catch (e) { console.error(e); return note ? cmdReply(note) : bodyBrain(text); }
 }
 async function spontaneous(note) {
   if (!engine) return null;
@@ -587,10 +589,15 @@ function setState(s, ms, next) {
 }
 const EMOTE = { happy: ['happy', 2400], excited: ['dance', 3000], sad: ['sit', 5000], sulky: ['refuse', 1800], sleepy: ['sit', 5000], curious: ['look', 3000], scared: ['dizzy', 2000], calm: ['idle', 1500] };
 const ACT = { wave: ['wave', 2200], dance: ['dance', 3000], happy: ['happy', 2400], look: ['look', 3000], refuse: ['refuse', 1800], sit: ['sit', 5000] };
+let jumpsLeft = 0;
+function startJump(n = 1) { jumpsLeft = Math.max(1, Math.min(5, n)); B.asleep = false; P.vy = -Math.sqrt(2 * 2600 * size() * .55); setState('jump', 9e9); play('happy'); }
+function startSpin() { B.asleep = false; P.spinT = 0; setState('spin', 1300, 'happy'); play('dance'); }
 function emote(emotion, action) {
-  if (P.state === 'held' || P.state === 'fall') return;
+  if (P.state === 'held' || P.state === 'fall' || P.state === 'jump') return;
   mood = emotion || 'calm'; moodUntil = now() + 120000;
   if (B.asleep) return;
+  if (action === 'jump') { startJump(1); return; }
+  if (action === 'spin') { startSpin(); return; }
   const a = (action && ACT[action]) || EMOTE[emotion] || EMOTE.calm;
   setState(a[0], a[1], 'idle');
   if (emotion === 'happy' || emotion === 'excited') burst('heart', 3);
@@ -622,6 +629,13 @@ function update(dt) {
     const dx = P.target - P.x, sp = 20 * px * STAGE_SIZE[M().stage];
     P.face = dx >= 0 ? 1 : -1;
     if (Math.abs(dx) < 3 || t > P.until) chooseNext(); else P.x += Math.sign(dx) * Math.min(Math.abs(dx), sp * dt);
+  } else if (P.state === 'jump') {
+    P.vy += 2600 * dt; P.y += P.vy * dt; play(P.vy < 0 ? 'happy' : 'fall');
+    if (P.y >= ground() && P.vy > 0) {
+      P.y = ground(); jumpsLeft--;
+      if (jumpsLeft > 0) { P.vy = -Math.sqrt(2 * 2600 * size() * .55); burst('heart', 1); }
+      else { P.vy = 0; setState('land', 300, 'idle'); }
+    }
   } else if (P.state === 'fall') {
     P.vy += 2600 * dt; P.y += P.vy * dt; P.x += P.vx * dt; P.vx *= .98;
     if (P.y >= ground()) {
@@ -630,9 +644,11 @@ function update(dt) {
       else setState('land', 300, 'idle');
     }
   } else if (P.state !== 'held' && P.state !== 'sleep' && t > P.until) {
+    // (spin, wave, sit etc. finish here)
     if (P.next) setState(P.next, P.next === 'idle' ? rnd(2500, 6000) : 2000); else chooseNext();
   }
-  if (P.state !== 'fall' && P.state !== 'held') P.y = ground();
+  if (P.state === 'spin' && t > (P.spinT || 0)) { P.face *= -1; P.spinT = t + 130; }
+  if (P.state !== 'fall' && P.state !== 'held' && P.state !== 'jump') P.y = ground();
   P.x = Math.max(s * .4, Math.min(W - s * .4, P.x));
   const fr = frames[P.anim] || [];
   P.ft += dt;
@@ -886,9 +902,9 @@ function placeBubble() {
 function showBubble(ms) { bubble.classList.add('on'); clearTimeout(bubbleT); if (ms) bubbleT = setTimeout(() => bubble.classList.remove('on'), ms); }
 function thinking(note) { clearInterval(typing); lineEl.innerHTML = '<span class="dots"><span>•</span><span>•</span><span>•</span></span>'; metaEl.hidden = !note; metaEl.textContent = note || ''; showBubble(0); }
 let offlineHint = false;
-function say(r, quiet) {
+function say(r, quiet, keepBody) {
   if (!r) return;
-  emote(r.emotion, r.action);
+  if (keepBody) { mood = r.emotion || mood; moodUntil = now() + 120000; } else emote(r.emotion, r.action);
   metaEl.hidden = true;
   if (r.offline && !offlineHint) { offlineHint = true; metaEl.hidden = false; metaEl.textContent = 'Basic brain only. Wake its mind in Settings.'; }
   const line = r.say || '…';
@@ -911,6 +927,72 @@ function say(r, quiet) {
   }, speed);
 }
 
+// ======================= asking Nori to do things =======================
+const NUMS = { one: 1, once: 1, two: 2, twice: 2, three: 3, four: 4, five: 5 };
+const COMMANDS = [
+  { id: 'wake', re: /^(wake up|get up|rise and shine|wakey)/, label: 'wake up' },
+  { id: 'sleep', re: /^(go to sleep|go to bed|sleep|nap|have a nap|take a nap|bed ?time|night night|go night night)/, label: 'go to sleep' },
+  { id: 'jump', re: /^(do a jump|jump|hop|leap|bounce)/, label: 'jump' },
+  { id: 'dance', re: /^(do a dance|dance|boogie|bust a move)/, label: 'dance' },
+  { id: 'spin', re: /^(do a spin|spin|twirl|turn around|spin around)/, label: 'spin round' },
+  { id: 'wave', re: /^(wave|say hi|say hello|wave hello)/, label: 'wave' },
+  { id: 'sit', re: /^(sit down|sit|take a seat)/, label: 'sit down' },
+  { id: 'come', re: /^(come here|come over|come back|over here|come)/, label: 'come over' },
+  { id: 'left', re: /^(go left|walk left|move left)/, label: 'go left' },
+  { id: 'right', re: /^(go right|walk right|move right)/, label: 'go right' },
+  { id: 'eat', re: /^(eat|have a snack|eat something|have some food|eat a fish)/, label: 'eat something' },
+  { id: 'look', re: /^(look around|look)/, label: 'look around' },
+  { id: 'stop', re: /^(stop|stay|stand still|freeze|wait)/, label: 'stay still' },
+];
+function parseCommand(text) {
+  let t = String(text).toLowerCase().replace(/[^a-z0-9\s']/g, ' ').replace(/\s+/g, ' ').trim();
+  t = t.replace(/^((hey |oi )?nori|please|pls|can you|could you|will you|would you|go on|now|ok|okay|and|then|just)\s+/, '');
+  t = t.replace(/^((hey |oi )?nori|please|pls|can you|could you|will you|would you|go on|now|ok|okay|and|then|just)\s+/, '');
+  if (!t || t.split(' ').length > 7) return null;
+  for (const c of COMMANDS) {
+    if (!c.re.test(t)) continue;
+    const n = (t.match(/\b([1-5]|one|once|two|twice|three|four|five)\b(?: times?)?/) || [])[1];
+    return { ...c, times: n ? (Number(n) || NUMS[n] || 1) : 1 };
+  }
+  return null;
+}
+function decide(cmd) {
+  const tr = M().traits, physical = ['jump', 'dance', 'spin', 'come', 'left', 'right'].includes(cmd.id);
+  if (physical && B.energy < 15) return [false, 'too tired'];
+  if (cmd.id === 'sleep' && B.energy > 85 && Math.random() < .5) return [false, 'not sleepy at all'];
+  if (cmd.id === 'eat' && B.full > 90) return [false, 'completely full'];
+  if (cmd.id === 'wake' && !B.asleep) return [true];
+  const p = Math.max(0, (45 - tr.discipline) / 100) + (mood === 'sulky' ? .25 : 0) + (tr.trust < 30 ? .15 : 0);
+  if (Math.random() < p) return [false, "feeling cheeky and didn't fancy it"];
+  return [true];
+}
+function doCommand(cmd) {
+  if (B.asleep && cmd.id !== 'sleep' && cmd.id !== 'wake') { B.asleep = false; renderTop(); }
+  switch (cmd.id) {
+    case 'sleep': goSleep(); break;
+    case 'wake': if (B.asleep) wake(); else emote('happy', 'happy'); break;
+    case 'jump': startJump(cmd.times); B.fun = Math.min(100, B.fun + 5); B.energy = Math.max(0, B.energy - 2 * cmd.times); break;
+    case 'dance': setState('dance', 3000 + 600 * (cmd.times - 1), 'happy'); B.fun = Math.min(100, B.fun + 8); B.energy = Math.max(0, B.energy - 3); break;
+    case 'spin': startSpin(); break;
+    case 'wave': setState('wave', 2200, 'idle'); break;
+    case 'sit': setState('sit', 9000, 'idle'); break;
+    case 'come': P.target = W / 2; setState('walk', 15000); break;
+    case 'left': P.target = W * .14; setState('walk', 15000); break;
+    case 'right': P.target = W * .86; setState('walk', 15000); break;
+    case 'eat': B.full = Math.min(100, B.full + 25); setState('eat', 3000, 'happy'); break;
+    case 'look': setState('look', 3500, 'idle'); break;
+    case 'stop': setState('idle', 10000); break;
+  }
+  event('obeyed');
+}
+function cmdReply(note) {
+  const m = M().stage;
+  if (m === 'chick' || m === 'fledgling') return { say: note.ok ? pick(['Peep!', 'Peep peep!', 'Pip!']) : 'Peep. (no)', emotion: note.ok ? 'happy' : 'sulky', action: 'none' };
+  if (!note.ok) return { say: note.why === 'too tired' ? "Too tired… maybe later." : note.why === 'completely full' ? "I'm stuffed, I can't!" : note.why === 'not sleepy at all' ? "Sleep? I'm not even a little bit tired." : "Nah. Don't feel like it.", emotion: 'sulky', action: 'none' };
+  const L = { sleep: 'Night night…', wake: "I'm up, I'm up!", jump: 'Wheee!', dance: 'Watch these moves!', spin: 'Round and round!', wave: 'Hiya!', sit: 'Sitting!', come: 'Coming!', left: 'This way?', right: 'Off I go!', eat: 'Yum, snack time.', look: "What's over there?", stop: 'Okay, staying put.' };
+  return { say: L[note.id] || 'Okay!', emotion: note.id === 'sleep' ? 'sleepy' : 'happy', action: 'none' };
+}
+
 // ======================= talking =======================
 const form = document.getElementById('say'), input = document.getElementById('msg');
 let waiting = false;
@@ -918,8 +1000,17 @@ form.addEventListener('submit', async e => {
   e.preventDefault(); unlockAudio();
   const text = input.value.trim(); if (!text || waiting) return;
   input.value = ''; waiting = true; talking = true;
-  if (B.asleep) wake();
-  if (!B.asleep) setState('look', 9e9);
+  // asked to do something? the body reacts straight away; the mind then talks about it
+  const cmd = parseCommand(text);
+  let note = null;
+  if (cmd) {
+    const [ok, why] = decide(cmd);
+    if (ok) doCommand(cmd); else { if (B.asleep) wake(); setState('refuse', 1800, 'idle'); }
+    note = { id: cmd.id, ok, why, text: ok ? `did what ${M().owner} asked: ${cmd.label}${cmd.times > 1 ? ` (${cmd.times} times)` : ''}.` : `refused when ${M().owner} asked you to ${cmd.label}, because you were ${why}.` };
+  } else {
+    if (B.asleep) wake();
+    if (!B.asleep) setState('look', 9e9);
+  }
   thinking(engine ? '' : null);
   const slow = setTimeout(() => { if (waiting) { metaEl.hidden = false; metaEl.textContent = 'Thinking hard…'; } }, 7000);
   // words appear as Nori thinks of them; the voice starts on the first finished sentence
@@ -946,19 +1037,20 @@ form.addEventListener('submit', async e => {
     }
     shownLen = t.length;
   };
-  const r = await talk(text, onSay);
+  const r = await talk(text, onSay, note);
+  const act = (em, ac) => { if (cmd) { mood = em || mood; moodUntil = now() + 120000; } else emote(em, ac); };
   clearTimeout(slow); waiting = false;
   B.fun = Math.min(100, B.fun + 6);
-  if (!started) say(r);                       // basic brain, or nothing streamed: show it the usual way
+  if (!started) say(r, false, !!cmd);         // basic brain, or nothing streamed: show it the usual way
   else if (useKokoro) {
-    emote(r.emotion, r.action);
+    act(r.emotion, r.action);
     const head = r.say.slice(0, spokenTo), rest = r.say.slice(spokenTo).trim();
     vs = vs || voiceSession(r.emotion);
     let shown = head.trimEnd();
     for (const p of splitSpeech(rest)) { shown += (shown ? ' ' : '') + p.trim(); const now = shown; vs.push(p, true, () => reveal(now)); }
     vs.done().then(() => { if (vs.failed()) reveal(r.say); });
   } else {
-    emote(r.emotion, r.action);
+    act(r.emotion, r.action);
     lineEl.textContent = r.say; placeBubble(); showBubble(6000 + r.say.length * 70);
     if (voiceMode === 'phone' && adultish) speakReal(r.say, r.emotion);
   }
