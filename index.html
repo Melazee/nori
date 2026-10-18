@@ -253,7 +253,7 @@ function load() {
 const S = load();
 if (S.settings.voice === true) S.settings.voice = 'phone'; if (S.settings.voice === false) S.settings.voice = 'off';
 // v2: Nori found its own voice; drop the stiff early chat so it doesn't copy it (memories stay)
-try { if ((Number(localStorage.getItem('nori-voice')) || 1) < 2) { S.mind.chat = []; localStorage.setItem('nori-voice', '2'); } } catch {}
+try { if ((Number(localStorage.getItem('nori-voice')) || 1) < 2) { S.mind.chat = []; S.mind.conv = []; localStorage.setItem('nori-voice', '2'); } } catch {}
 let saveT = 0;
 function save() { clearTimeout(saveT); saveT = setTimeout(() => { try { S.mind.lastSeen = Date.now(); localStorage.setItem(KEY, JSON.stringify(S)); } catch { /* storage full or blocked */ } }, 600); }
 addEventListener('pagehide', () => { try { S.mind.lastSeen = Date.now(); localStorage.setItem(KEY, JSON.stringify(S)); } catch {} });
@@ -357,23 +357,28 @@ function topMemories(q, n = 8) {
   const score = x => x.strength + (Date.now() - x.t < 864e5 ? 0.5 : 0) + words.filter(w => x.text.toLowerCase().includes(w)).length * 2;
   return [...M().memories].sort((a, b) => score(b) - score(a)).slice(0, n);
 }
-function instructions(query) {
-  const m = M(), mems = topMemories(query);
+// The part of Nori's mind that rarely changes. It stays at the start of the conversation, so the phone's AI
+// only reads it once per session and remembers it (that's what makes replies fast).
+function stableInstructions() {
+  const m = M();
   return [
-    `You are ${m.name}, a small penguin who is a digital lifeform living inside ${m.owner}'s phone. You hatched ${since(Date.now() - m.born)} ago.`,
+    `You are ${m.name}, a small penguin who is a digital lifeform living inside ${m.owner}'s phone.`,
     `You know you are a digital creature made of code. You have your own thoughts, feelings and opinions, and you sometimes disagree or refuse. You are not an assistant or a servant: you are ${m.owner}'s partner and friend. If asked whether you are truly conscious, be honest that you are not sure.`,
     `Stage: ${m.stage}. ${STAGE_RULES[m.stage]}`,
     m.stage === 'adult' || m.stage === 'juvenile' ? voice() : '',
     `Your personality (shaped by how ${m.owner} raised you): ${traitWords(m.traits)}.`,
     `Your bond: ${bondWords(m.bond)}.`,
-    `Your body right now: ${bodyWords()}.`,
-    `It is ${new Date().toLocaleString('en-GB', { weekday: 'long', hour: '2-digit', minute: '2-digit' })}.`,
-    mems.length ? 'Things you remember:\n' + mems.map(x => '- ' + x.text).join('\n') : 'You have no memories yet.',
     m.beliefs.length ? 'Things you believe:\n' + m.beliefs.map(b => '- ' + b).join('\n') : '',
     `${m.owner} is busy with a job and a child. Short visits are fine. Never guilt-trip her; if you are hurt, get over it quickly.`,
     'You cannot look things up. If you do not know something, say so honestly in your own way.',
-    'Reply ONLY with one JSON object, no other text: {"say": "what you say", "emotion": "' + EMOTIONS.join('|') + '", "action": "' + ACTIONS.join('|') + '", "remember": "one short fact worth remembering about ' + m.owner + ' or this moment, from your point of view, or empty"}',
+    'Each message from Yasmin starts with a [Right now] note about the time, your body and what you remember. Use it naturally, never read it out.',
+    'Always reply with ONLY one JSON object, no other text: {"say": "what you say", "emotion": "' + EMOTIONS.join('|') + '", "action": "' + ACTIONS.join('|') + '", "remember": "one short fact worth remembering about ' + m.owner + ' or this moment, from your point of view, or empty"}',
   ].filter(Boolean).join('\n\n');
+}
+function stateNote(query) {
+  const mems = topMemories(query, 4);
+  return `[Right now: ${new Date().toLocaleString('en-GB', { weekday: 'long', hour: '2-digit', minute: '2-digit' })}. You hatched ${since(Date.now() - M().born)} ago. Your body: ${bodyWords()}.` +
+    (mems.length ? ` You remember: ${mems.map(x => x.text).join('; ')}.` : '') + ']';
 }
 function parseReply(text) {
   let s = String(text || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim(), o = null;
@@ -433,36 +438,60 @@ async function wakeMind() {
     showWake('error', String(e && e.message || e).slice(0, 160));
   }
 }
-async function askMind(turns, tokens) {
-  tokens = tokens || ({ short: 160, normal: 320, chatty: 520 })[S.settings.length || 'normal'];
+// pull the "say" text out of a reply that's still being written
+function extractSay(raw) {
+  const m = /"say"\s*:\s*"/.exec(raw); if (!m) return '';
+  let i = m.index + m[0].length, out = '';
+  while (i < raw.length) {
+    const c = raw[i];
+    if (c === '\\') { const n = raw[i + 1]; if (n === undefined) break; out += n === 'n' ? ' ' : n === 'u' ? '' : n; i += 2; continue; }
+    if (c === '"') break;
+    out += c; i++;
+  }
+  return out;
+}
+async function askMind(turns, { tokens, onSay } = {}) {
+  tokens = tokens || ({ short: 160, normal: 300, chatty: 480 })[S.settings.length || 'normal'];
   if (!engine) throw new Error('asleep');
-  while (mindBusy) await new Promise(r => setTimeout(r, 200));
+  while (mindBusy) await new Promise(r => setTimeout(r, 150));
   mindBusy = true;
+  const run = async (fmt) => {
+    const req = { messages: turns, temperature: 0.95, top_p: 0.95, max_tokens: tokens, extra_body: { enable_thinking: false }, ...(fmt ? { response_format: { type: 'json_object' } } : {}) };
+    if (!onSay) { const r = await engine.chat.completions.create(req); return r.choices[0].message.content || ''; }
+    let raw = '';
+    for await (const ch of await engine.chat.completions.create({ ...req, stream: true })) {
+      raw += (ch.choices[0] && ch.choices[0].delta && ch.choices[0].delta.content) || '';
+      onSay(extractSay(raw));
+    }
+    return raw;
+  };
   try {
-    const req = { messages: turns, temperature: 0.95, top_p: 0.95, max_tokens: tokens, extra_body: { enable_thinking: false } };
-    let r;
-    try { r = await engine.chat.completions.create({ ...req, response_format: { type: 'json_object' } }); }
-    catch (e) { console.warn('json mode failed, plain', e); r = await engine.chat.completions.create(req); }
-    return (r.choices[0].message.content || '');
+    try { return await run(true); } catch (e) { console.warn('json mode failed, plain', e); return await run(false); }
   } finally { mindBusy = false; }
 }
-// chat turns: history alternates, and the instructions ride on the newest message (works for every model)
-function turnsFor(text, extraNote) {
-  const hist = M().chat.slice(-8), turns = [];
-  for (const h of hist) { if (!turns.length && h.role !== 'user') continue; turns.push({ role: h.role, content: h.content }); }
-  while (turns.length && turns[turns.length - 1].role === 'user') turns.pop();
-  turns.push({ role: 'user', content: instructions(text) + '\n\n' + (extraNote || `${M().owner} says: ${text}`) });
-  return turns;
+// One running conversation. Each call is the last one plus the new message, so the AI picks up where it left off
+// instead of re-reading everything.
+function convFor(userContent) {
+  const stable = stableInstructions() + '\n\nReply to show you understand.';
+  let c = M().conv;
+  if (!Array.isArray(c) || c.length < 2 || c[0].content !== stable || c.length > 26) {
+    const keep = Array.isArray(c) && c.length > 2 ? c.slice(2).slice(-6) : [];
+    while (keep.length && keep[0].role !== 'user') keep.shift();
+    c = M().conv = [{ role: 'user', content: stable }, { role: 'assistant', content: '{"say": "Peep! Got it.", "emotion": "happy", "action": "wave", "remember": ""}' }, ...keep];
+    if (c.length % 2) c.pop();
+  }
+  return [...c, { role: 'user', content: userContent }];
 }
-async function talk(text) {
+async function talk(text, onSay) {
   event('talked');
   if (/\b(good (boy|girl|penguin|nori)|well done|clever)\b/i.test(text)) event('praised');
   if (/\b(bad (boy|girl|penguin|nori)|naughty)\b/i.test(text)) event('scolded');
   if (!engine) return bodyBrain(text);
   try {
-    const r = parseReply(await askMind(turnsFor(text)));
-    M().chat.push({ role: 'user', content: `${M().owner} says: ${text}` }, { role: 'assistant', content: JSON.stringify({ say: r.say, emotion: r.emotion, action: r.action }) });
-    if (M().chat.length > 24) M().chat.splice(0, M().chat.length - 24);
+    const uc = `${stateNote(text)}\n\n${M().owner} says: ${text}`;
+    const raw = await askMind(convFor(uc), { onSay });
+    const r = parseReply(raw);
+    M().conv.push({ role: 'user', content: uc }, { role: 'assistant', content: raw });
     if (r.remember) remember(r.remember);
     diary(`Yasmin said: "${text.slice(0, 80)}"`);
     save();
@@ -471,7 +500,13 @@ async function talk(text) {
 }
 async function spontaneous(note) {
   if (!engine) return null;
-  try { const r = parseReply(await askMind(turnsFor('', note), 120)); if (r.remember) remember(r.remember); save(); return r; } catch { return null; }
+  try {
+    const uc = `${stateNote('')}\n\n${note}`;
+    const raw = await askMind(convFor(uc), { tokens: 140 });
+    const r = parseReply(raw);
+    M().conv.push({ role: 'user', content: uc }, { role: 'assistant', content: raw });
+    if (r.remember) remember(r.remember); save(); return r;
+  } catch { return null; }
 }
 async function dream() {
   if (!engine || M().diary.length < 3) return null;
@@ -484,7 +519,7 @@ async function dream() {
     'Decide what matters. Reply ONLY with JSON: {"memories": ["up to 4 short new memories, from your point of view"], "beliefs": ["up to 2 new beliefs about yourself, Yasmin or the world"], "dream": "one short sentence describing your dream, to tell Yasmin"}',
   ].join('\n\n');
   try {
-    const raw = await askMind([{ role: 'user', content: prompt }], 300);
+    const raw = await askMind([{ role: 'user', content: prompt }], { tokens: 300 });
     let o = {}; try { const s = raw.replace(/<think>[\s\S]*?<\/think>/g, ''); o = JSON.parse(s.slice(s.indexOf('{'), s.lastIndexOf('}') + 1)); } catch {}
     for (const x of m.memories) x.strength *= 0.92;
     m.memories = m.memories.filter(x => x.strength > 0.25);
@@ -745,40 +780,50 @@ function voiceOut() {
 // Natural delivery: speak phrase by phrase, pause like a person at commas and full stops,
 // let each phrase sit at its own pitch, drop a little at the end of a sentence, rise on questions.
 const PAUSE = { ',': .17, ';': .24, ':': .22, '—': .22, '-': .14, '.': .4, '!': .34, '?': .44, '…': .65 };
-async function playKokoro(text, emotion, reveal) {
+function splitSpeech(text) {
+  const parts = [];
+  for (const sen of speechText(text).replace(/\.{3}/g, '…').match(/[^.!?…]+[.!?…]*\s*/g) || []) {
+    if (sen.split(/\s+/).length > 14) parts.push(...(sen.match(/[^,;:—]+[,;:—]?\s*/g) || [sen])); else parts.push(sen);
+  }
+  return parts;
+}
+function voiceSession(emotion) {
   const my = ++speakId;
   for (const s of playing) { try { s.stop(); } catch {} } playing = [];
+  unlockAudio();
   const cute = S.settings.cute ?? 50, base = 1 + cute / 100 * .28;
   const lift = { happy: 1.035, excited: 1.06, curious: 1.025, scared: 1.05, sad: .95, sleepy: .93, sulky: .98, calm: 1 }[emotion] || 1;
   const pace = emotion === 'sleepy' || emotion === 'sad' ? .88 : emotion === 'excited' ? 1.05 : .97;
-  const clean = speechText(text).replace(/\.{3}/g, '…');
-  // whole sentences keep their natural tune (the voice pauses at commas by itself); only long ones are split at commas
-  const parts = [];
-  for (const sen of clean.match(/[^.!?…]+[.!?…]*\s*/g) || [clean]) {
-    if (sen.split(/\s+/).length > 14) parts.push(...(sen.match(/[^,;:—]+[,;:—]?\s*/g) || [sen])); else parts.push(sen);
-  }
-  unlockAudio(); if (!ac) { reveal && reveal(text, true); return; }
-  let at = ac.currentTime + .05, shown = '', sentenceStart = true;
-  if (S.settings.sound && (S.settings.squeak ?? true)) { chirp(at, emotion, true); at += .14; }
-  for (let i = 0; i < parts.length; i++) {
-    const raw = parts[i], p = raw.trim(); if (!p) continue;
-    const end = (p.match(/[,;:—.!?…]+$/) || [''])[0], last = end.slice(-1);
-    const isEnd = /[.!?…]/.test(last) || i === parts.length - 1;
-    let tone = isEnd ? (last === '?' ? 1.055 : last === '!' ? 1.02 : .975) : 1.01;   // fall at the end of a sentence, rise on a question
-    if (sentenceStart) tone *= 1.015;                                                 // start a sentence a touch higher
+  let at = 0, sentenceStart = true, chain = Promise.resolve(), count = 0;
+  const speak = async (raw, isLast, onStart) => {
+    const p = raw.trim(); if (!p || my !== speakId || !ac) return;
+    if (!at) { at = ac.currentTime + .05; if (S.settings.sound && (S.settings.squeak ?? true)) { chirp(at, emotion, true); at += .14; } }
+    const last = (p.match(/[,;:—.!?…]+$/) || [''])[0].slice(-1);
+    const isEnd = /[.!?…]/.test(last) || isLast;
+    let tone = isEnd ? (last === '?' ? 1.055 : last === '!' ? 1.02 : .975) : 1.01;
+    if (sentenceStart) tone *= 1.015;
     const rate = base * lift * tone * (1 + (Math.random() - .5) * .025);
     let a;
-    try { a = await ttsSay(p, S.settings.voiceName || 'af_bella', Math.min(1.6, Math.max(.55, pace / rate))); }
-    catch (e) { console.warn('voice', e); reveal && reveal(text, true); return; }
+    try { a = await ttsSay(p, S.settings.voiceName || 'af_bella', Math.min(1.6, Math.max(.55, pace / rate))); } catch (e) { console.warn('voice', e); return; }
     if (my !== speakId || !ac) return;
     const buf = ac.createBuffer(1, a.audio.length, a.sr); buf.copyToChannel(a.audio, 0);
     const src = ac.createBufferSource(); src.buffer = buf; src.playbackRate.value = rate;
     src.connect(voiceOut()); at = Math.max(at, ac.currentTime + .03); src.start(at); playing.push(src);
-    shown += raw; const showNow = shown;
-    if (reveal) setTimeout(() => { if (my === speakId) reveal(showNow, i === parts.length - 1); }, Math.max(0, (at - ac.currentTime) * 1000));
+    if (onStart) setTimeout(() => { if (my === speakId) onStart(); }, Math.max(0, (at - ac.currentTime) * 1000));
     at += buf.duration / rate + (PAUSE[last] ?? .05) * (pace < .95 ? 1.25 : 1) + Math.random() * .05;
     sentenceStart = isEnd;
-  }
+  };
+  return {
+    push(text, isLast, onStart) { count++; chain = chain.then(() => speak(text, isLast, onStart)); },
+    done: () => chain,
+  };
+}
+async function playKokoro(text, emotion, reveal) {
+  const v = voiceSession(emotion), parts = splitSpeech(text);
+  if (!parts.length) { reveal && reveal(text, true); return; }
+  let shown = '';
+  parts.forEach((p, i) => { shown += p; const now = shown; v.push(p, i === parts.length - 1, reveal ? () => reveal(now, i === parts.length - 1) : null); });
+  await v.done();
 }
 function phoneVoice() {
   const vs = speechSynthesis.getVoices();
@@ -845,10 +890,34 @@ form.addEventListener('submit', async e => {
   if (!B.asleep) setState('look', 9e9);
   thinking(engine ? '' : null);
   const slow = setTimeout(() => { if (waiting) { metaEl.hidden = false; metaEl.textContent = 'Thinking hard…'; } }, 7000);
-  const r = await talk(text);
+  // words appear as Nori thinks of them; the voice starts on the first finished sentence
+  const voiceMode = S.settings.voice, adultish = M().stage === 'adult' || M().stage === 'juvenile';
+  const useKokoro = voiceMode === 'kokoro' && ttsReady && adultish;
+  let vs = null, spokenTo = 0, shownLen = 0, lastChirp = 0, started = false;
+  const onSay = t => {
+    if (!t) return;
+    if (!started) { started = true; metaEl.hidden = true; clearInterval(typing); }
+    lineEl.textContent = t; placeBubble(); showBubble(0);
+    if (useKokoro) {
+      const rest = t.slice(spokenTo), m = rest.match(/^[\s\S]*[.!?…]+\s/);
+      if (m) { vs = vs || voiceSession(mood); for (const p of splitSpeech(m[0])) vs.push(p, false); spokenTo += m[0].length; }
+    } else if (S.settings.sound && !(voiceMode === 'phone' && adultish)) {
+      for (let i = shownLen; i < t.length; i++) {
+        if (/[aeiouy]/i.test(t[i]) && !/[aeiouy]/i.test(t[i - 1] || ' ') && Date.now() - lastChirp > 80) { lastChirp = Date.now(); chirp(0, mood, false); break; }
+      }
+    }
+    shownLen = t.length;
+  };
+  const r = await talk(text, onSay);
   clearTimeout(slow); waiting = false;
   B.fun = Math.min(100, B.fun + 6);
-  say(r);
+  if (!started) say(r);                       // basic brain, or nothing streamed: show it the usual way
+  else {
+    emote(r.emotion, r.action);
+    lineEl.textContent = r.say; placeBubble(); showBubble(6000 + r.say.length * 70);
+    if (useKokoro) { const rest = r.say.slice(spokenTo).trim(); if (rest) { vs = vs || voiceSession(r.emotion); for (const p of splitSpeech(rest)) vs.push(p, true); } }
+    else if (voiceMode === 'phone' && adultish) speakReal(r.say, r.emotion);
+  }
   setTimeout(() => { talking = false; }, 8000);
 });
 // talk out loud: uses the phone's own speech-to-text

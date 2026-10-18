@@ -1,14 +1,17 @@
 // Nori's natural speaking voice (Kokoro, a small free voice model that runs on the phone).
 import { KokoroTTS } from 'https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/dist/kokoro.web.js';
 
+const MODEL = 'onnx-community/Kokoro-82M-v1.0-ONNX';
 let tts = null, loading = null, loadedDtype = null;
 function load(dtype = 'fp32') {
   if (loading && loadedDtype === dtype) return loading;
   loadedDtype = dtype; tts = null;
-  loading = KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX', {
-    dtype, device: 'wasm',
-    progress_callback: (p) => { if (p && p.status === 'progress') self.postMessage({ type: 'progress', file: p.file, progress: p.progress, loaded: p.loaded, total: p.total }); },
-  }).then((t) => { tts = t; self.postMessage({ type: 'ready' }); return t; });
+  const opts = (device) => ({ dtype, device,
+    progress_callback: (p) => { if (p && p.status === 'progress') self.postMessage({ type: 'progress', file: p.file, progress: p.progress, loaded: p.loaded, total: p.total }); } });
+  // the phone's graphics chip speaks much faster; fall back to the normal processor if it isn't available
+  const gpu = dtype === 'fp32' && self.navigator && self.navigator.gpu;
+  loading = (gpu ? KokoroTTS.from_pretrained(MODEL, opts('webgpu')).catch(() => KokoroTTS.from_pretrained(MODEL, opts('wasm'))) : KokoroTTS.from_pretrained(MODEL, opts('wasm')))
+    .then((t) => { tts = t; self.postMessage({ type: 'ready' }); return t; });
   return loading;
 }
 self.onmessage = async ({ data }) => {
