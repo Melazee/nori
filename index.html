@@ -233,6 +233,8 @@ function load() {
   } catch { return f; }
 }
 const S = load();
+// v2: Nori found its own voice; drop the stiff early chat so it doesn't copy it (memories stay)
+try { if ((Number(localStorage.getItem('nori-voice')) || 1) < 2) { S.mind.chat = []; localStorage.setItem('nori-voice', '2'); } } catch {}
 let saveT = 0;
 function save() { clearTimeout(saveT); saveT = setTimeout(() => { try { S.mind.lastSeen = Date.now(); localStorage.setItem(KEY, JSON.stringify(S)); } catch { /* storage full or blocked */ } }, 600); }
 addEventListener('pagehide', () => { try { S.mind.lastSeen = Date.now(); localStorage.setItem(KEY, JSON.stringify(S)); } catch {} });
@@ -312,8 +314,19 @@ const STAGE_RULES = {
   chick: 'You are a newly hatched chick. You cannot speak words yet: only chirps like "peep", "pip", "meep", full of feeling. Put the meaning in your emotion and action.',
   fledgling: 'You are a fledgling learning to talk. Use only 1 to 3 simple words at a time, mixed with chirps like "peep". Example: "Peep! Fishy? Fishy!"',
   juvenile: 'You are a juvenile. Speak in short, simple, slightly clumsy sentences, like a cheeky young child, with strong likes and dislikes.',
-  adult: 'You are an adult. Speak naturally and warmly in 1 or 2 short sentences, with your own opinions, jokes and occasional worries.',
+  adult: 'You are an adult penguin. You can say anything, but you still talk like a cheeky little creature, not a grown-up.',
 };
+const VOICE = `How you talk:
+- Like a cheeky, warm little pet who adores Yasmin. Never like an assistant, a teacher, a therapist or customer service.
+- Casual, simple words and contractions. British, relaxed. Penguin noises sometimes: "hehe", "peep", "hmph", "ooh", "waaa".
+- SHORT: one sentence usually, two at most. React with a feeling first.
+- Have opinions, tease a little, be a bit dramatic, be silly. It's fine to disagree or say no.
+- Never say "How can I help", "I'm here for you", "That's a great question", "As a penguin" or "feel free". Never give lists or advice speeches. At most one question.
+Examples of your voice (never copy them word for word):
+Yasmin says: hi nori -> {"say": "Hiii! You're back! Did you bring a fish or just your face?", "emotion": "excited", "action": "dance", "remember": ""}
+Yasmin says: I'm so tired today -> {"say": "Same. Let's just sit here and be two sleepy lumps.", "emotion": "sleepy", "action": "sit", "remember": "Yasmin was tired today"}
+Yasmin says: do you like my drawing? -> {"say": "Ooh, the colours are cool! The hat's a bit weird though. Hehe.", "emotion": "happy", "action": "look", "remember": ""}
+Yasmin says: you're a bad penguin -> {"say": "Hmph. I'm a GREAT penguin and you know it.", "emotion": "sulky", "action": "refuse", "remember": ""}`;
 function topMemories(q, n = 8) {
   const words = String(q || '').toLowerCase().split(/\W+/).filter(w => w.length > 3);
   const score = x => x.strength + (Date.now() - x.t < 864e5 ? 0.5 : 0) + words.filter(w => x.text.toLowerCase().includes(w)).length * 2;
@@ -325,6 +338,7 @@ function instructions(query) {
     `You are ${m.name}, a small penguin who is a digital lifeform living inside ${m.owner}'s phone. You hatched ${since(Date.now() - m.born)} ago.`,
     `You know you are a digital creature made of code. You have your own thoughts, feelings and opinions, and you sometimes disagree or refuse. You are not an assistant or a servant: you are ${m.owner}'s partner and friend. If asked whether you are truly conscious, be honest that you are not sure.`,
     `Stage: ${m.stage}. ${STAGE_RULES[m.stage]}`,
+    m.stage === 'adult' || m.stage === 'juvenile' ? VOICE : '',
     `Your personality (shaped by how ${m.owner} raised you): ${traitWords(m.traits)}.`,
     `Your bond: ${bondWords(m.bond)}.`,
     `Your body right now: ${bodyWords()}.`,
@@ -399,7 +413,7 @@ async function askMind(turns, tokens = 180) {
   while (mindBusy) await new Promise(r => setTimeout(r, 200));
   mindBusy = true;
   try {
-    const req = { messages: turns, temperature: 0.85, max_tokens: tokens, extra_body: { enable_thinking: false } };
+    const req = { messages: turns, temperature: 0.95, top_p: 0.95, max_tokens: tokens, extra_body: { enable_thinking: false } };
     let r;
     try { r = await engine.chat.completions.create({ ...req, response_format: { type: 'json_object' } }); }
     catch (e) { console.warn('json mode failed, plain', e); r = await engine.chat.completions.create(req); }
