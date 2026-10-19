@@ -434,10 +434,10 @@ async function wakeMind() {
     let worker = null;
     try {
       worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
-      $('wakeText').textContent = `${m.name}. The first time downloads it (${m.size}); after that it wakes in seconds, with no internet needed.`;
+      $('wakeText').textContent = S.settings.mindOn && key === S.settings.model ? `${m.name}. Loading from your phone, nothing to download.` : `${m.name}. The first time downloads it (${m.size}); after that it wakes in seconds, with no internet needed.`;
       engine = await lib.CreateWebWorkerMLCEngine(worker, m.id(quant), { initProgressCallback: r => { setWakeProgress(r.progress || 0, r.text || ''); } });
       if (key !== S.settings.model) wakeNote = `${(MODELS.find(x => x.key === S.settings.model) || {}).name || 'That brain'} didn't fit on this device, so Nori is using ${m.name}.`;
-      S.settings.model = key; mindState = 'awake'; S.settings.mindOn = true; save();
+      S.settings.model = key; S.settings.modelPicked = true; mindState = 'awake'; S.settings.mindOn = true; flush();
       hideWake(); renderTop();
       afterWake();
       return;
@@ -538,7 +538,7 @@ function mindCrashed(msg) {
   engine = null; mindState = 'asleep'; mindBusy = false; renderTop();
   if (!next || S.settings.model === 'llama1b') { showWake('error', "Nori's mind crashed while thinking, even on the smallest brain. Close other apps and try again."); return true; }
   const from = (MODELS.find(x => x.key === S.settings.model) || {}).name || 'That brain';
-  S.settings.model = next; save();
+  S.settings.model = next; S.settings.modelPicked = true; flush();
   wakeNote = `${from} was too big for this device while thinking, so Nori switched to ${(MODELS.find(x => x.key === next) || {}).name}.`;
   greeted = false; wakeMind();
   return true;
@@ -1154,7 +1154,7 @@ function showWake(kind, msg) {
   const m = MODELS.find(x => x.key === S.settings.model) || MODELS[0];
   if (kind === 'noGpu') { $('wakeTitle').textContent = "This browser can't run Nori's mind"; $('wakeText').textContent = 'Open this page in Chrome on your phone. Until then, Nori uses its basic brain.'; $('wakeGo').hidden = true; }
   else if (kind === 'error') { $('wakeTitle').textContent = "Nori's mind didn't wake up"; $('wakeText').textContent = 'Check you have Wi-Fi and some free space, then try again. You can also pick a smaller mind in Settings.'; $('wakeStatus').textContent = msg || ''; $('wakeGo').textContent = 'Try again'; }
-  else if (kind === 'progress') { $('wakeTitle').textContent = 'Waking Nori\'s mind…'; $('wakeText').textContent = `${m.name}. The first time downloads it; after that it wakes in seconds, with no internet needed.`; }
+  else if (kind === 'progress') { $('wakeTitle').textContent = S.settings.mindOn ? 'Nori is waking up…' : 'Waking Nori\'s mind…'; $('wakeText').textContent = `${m.name}. The first time downloads it; after that it wakes in seconds, with no internet needed.`; }
   else { $('wakeTitle').textContent = "Nori's mind is asleep"; $('wakeText').textContent = `Its mind is a free AI that runs on this phone. Nothing you say leaves the phone. Waking it needs a one-time download (${m.size}), so use Wi-Fi.`; }
 }
 function setWakeProgress(p, text) { $('wakeBar').style.width = Math.round(p * 100) + '%'; $('wakeStatus').textContent = (text || '').replace(/\[.*?\]\s*/g, '').slice(0, 110); }
@@ -1317,7 +1317,7 @@ requestAnimationFrame(frame);
 
 gpuOk = await gpuCheck();
 if (!gpuOk) showWake('noGpu');
-else if (S.settings.mindOn && await isDownloaded()) wakeMind();   // already downloaded: wake quietly
+else if (S.settings.mindOn) wakeMind();   // woken before: wake by itself (it loads from the phone, no new download)
 else showWake('ask');
 if (awayMs > 30 * 60000 && !S.settings.mindOn) setTimeout(() => say({ say: M().stage === 'chick' ? 'Peep! Peep!' : 'You came back!', emotion: 'happy', action: 'wave' }, true), 1500);
 
