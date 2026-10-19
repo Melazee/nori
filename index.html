@@ -419,7 +419,7 @@ async function gpuCheck() {
 }
 const modelId = () => (MODELS.find(m => m.key === S.settings.model) || MODELS[0]).id(quant);
 async function isDownloaded() { try { lib = lib || await import(LIB); return await lib.hasModelInCache(modelId()); } catch { return false; } }
-let wakeNote = '';
+let wakeNote = '', loadedId = '';
 async function wakeMind() {
   if (engine || mindState === 'waking') return;
   if (!gpuOk) { showWake('noGpu'); return; }
@@ -437,7 +437,7 @@ async function wakeMind() {
       $('wakeText').textContent = S.settings.mindOn && key === S.settings.model ? `${m.name}. Loading from your phone, nothing to download.` : `${m.name}. The first time downloads it (${m.size}); after that it wakes in seconds, with no internet needed.`;
       engine = await lib.CreateWebWorkerMLCEngine(worker, m.id(quant), { initProgressCallback: r => { setWakeProgress(r.progress || 0, r.text || ''); } });
       if (key !== S.settings.model) wakeNote = `${(MODELS.find(x => x.key === S.settings.model) || {}).name || 'That brain'} didn't fit on this device, so Nori is using ${m.name}.`;
-      S.settings.model = key; S.settings.modelPicked = true; mindState = 'awake'; S.settings.mindOn = true; flush();
+      loadedId = m.id(quant); S.settings.model = key; S.settings.modelPicked = true; mindState = 'awake'; S.settings.mindOn = true; flush();
       hideWake(); renderTop();
       afterWake();
       return;
@@ -501,8 +501,18 @@ async function askMind(turns, { tokens, onSay } = {}) {
     if (cut) { const clean = unloop(extractSay(raw)); onSay && onSay(clean); return JSON.stringify({ say: clean || '…', emotion: 'calm', action: 'none', remember: '' }); }
     return raw;
   };
+  const dropped = e => /not loaded|reload\(|ModelNotLoaded|device.*lost|lost.*device/i.test(String((e && e.message) || e));
   try {
-    try { return await run(true); } catch (e) { console.warn('json mode failed, plain', e); return await run(false); }
+    try { return await run(true); }
+    catch (e) {
+      if (dropped(e) && engine && loadedId) {
+        console.warn('brain was dropped, loading it back', e);
+        showWake('progress'); $('wakeText').textContent = 'Nori dozed off for a second. Loading its mind back from your phone…';
+        try { await engine.reload(loadedId); } finally { hideWake(); }
+        return await run(true);
+      }
+      console.warn('json mode failed, plain', e); return await run(false);
+    }
   } finally { mindBusy = false; }
 }
 // One running conversation. Each call is the last one plus the new message, so the AI picks up where it left off
@@ -531,7 +541,7 @@ function recap() {
 let lastMindErr = '';
 // the brain loaded but fell over while thinking (usually: not enough graphics memory). Swap to a smaller one.
 function mindCrashed(msg) {
-  if (!/lost|memory|OOM|out of|buffer|GPU|device|Aborted|RuntimeError|unreachable/i.test(msg)) return false;
+  if (!/lost|memory|OOM|out of|buffer|GPU|device|Aborted|RuntimeError|unreachable|not loaded|reload/i.test(msg)) return false;
   const order = MODELS.map(m => m.key), smaller = ['qwen3s', 'llama1b'];
   const next = smaller.find(k => k !== S.settings.model && order.indexOf(k) > -1 && (S.settings.model !== 'llama1b'));
   try { engine && engine.unload && engine.unload(); } catch {}
@@ -574,7 +584,7 @@ async function spontaneous(note, tokens = 140) {
     const r = parseReply(raw);
     M().conv.push({ role: 'user', content: uc }, { role: 'assistant', content: raw });
     if (r.remember) remember(r.remember); save(); return r;
-  } catch { return null; }
+  } catch (e) { console.warn('thought failed', e); lastMindErr = String((e && e.message) || e); mindCrashed(lastMindErr); return null; }
 }
 async function dream() {
   if (!engine || M().diary.length < 3) return null;
