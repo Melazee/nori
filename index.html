@@ -173,6 +173,7 @@ button { cursor: pointer; }
       <h3>Mind</h3>
       <p class="small" id="mindState" style="margin:0 0 10px">Asleep</p>
       <div id="modelOpts"></div>
+      <p class="small" id="mindDiag" style="margin:10px 0 0; overflow-wrap:anywhere"></p>
       <div class="row" style="margin-top:10px"><button class="btn" id="wakeFromMenu">Wake mind</button></div>
     </div>
     <div>
@@ -390,6 +391,7 @@ function bodyBrain(text) {
   if (/(night|sleep|bed)/.test(t)) return { say: 'Sleepy… night night.', emotion: 'sleepy', action: 'sit' };
   if (/(good|clever|well done)/.test(t)) return { say: 'I know! I\'m brilliant.', emotion: 'happy', action: 'dance' };
   if (/(bad|stop)/.test(t)) return { say: 'Hmph.', emotion: 'sulky', action: 'refuse' };
+  if (mindState === 'waking') return { say: 'Give me a second, my brain is still waking up…', emotion: 'sleepy', action: 'sit', offline: true };
   return { say: pick(['Peep? My thinking brain is asleep.', "I can't think properly yet. Wake my mind!"]), emotion: 'curious', action: 'look', offline: true };
 }
 
@@ -484,7 +486,7 @@ function extractSay(raw) {
 async function askMind(turns, { tokens, onSay } = {}) {
   tokens = tokens || ({ short: 120, normal: 230, chatty: 380 })[S.settings.length || 'normal'];
   if (!engine) throw new Error('asleep');
-  while (mindBusy) await new Promise(r => setTimeout(r, 150));
+  for (let waited = 0; mindBusy && waited < 60000; waited += 150) await new Promise(r => setTimeout(r, 150));
   mindBusy = true;
   const run = async (fmt) => {
     const req = { messages: turns, temperature: 0.9, top_p: 0.92, frequency_penalty: 0.5, presence_penalty: 0.3, max_tokens: tokens, extra_body: { enable_thinking: false }, ...(fmt ? { response_format: { type: 'json_object' } } : {}) };
@@ -526,6 +528,21 @@ function recap() {
   const cut = (t, n) => t.length > n ? t.slice(0, n) + '…' : t;
   return `\n[Just now: ${said ? `${M().owner} said "${cut(said, 160)}". ` : ''}You said "${cut(you, 200)}".]`;
 }
+let lastMindErr = '';
+// the brain loaded but fell over while thinking (usually: not enough graphics memory). Swap to a smaller one.
+function mindCrashed(msg) {
+  if (!/lost|memory|OOM|out of|buffer|GPU|device|Aborted|RuntimeError|unreachable/i.test(msg)) return false;
+  const order = MODELS.map(m => m.key), smaller = ['qwen3s', 'llama1b'];
+  const next = smaller.find(k => k !== S.settings.model && order.indexOf(k) > -1 && (S.settings.model !== 'llama1b'));
+  try { engine && engine.unload && engine.unload(); } catch {}
+  engine = null; mindState = 'asleep'; mindBusy = false; renderTop();
+  if (!next || S.settings.model === 'llama1b') { showWake('error', "Nori's mind crashed while thinking, even on the smallest brain. Close other apps and try again."); return true; }
+  const from = (MODELS.find(x => x.key === S.settings.model) || {}).name || 'That brain';
+  S.settings.model = next; save();
+  wakeNote = `${from} was too big for this device while thinking, so Nori switched to ${(MODELS.find(x => x.key === next) || {}).name}.`;
+  greeted = false; wakeMind();
+  return true;
+}
 async function talk(text, onSay, note) {
   event('talked');
   if (/\b(good (boy|girl|penguin|nori)|well done|clever)\b/i.test(text)) event('praised');
@@ -540,7 +557,14 @@ async function talk(text, onSay, note) {
     diary(`Yasmin said: "${text.slice(0, 80)}"`);
     save();
     return r;
-  } catch (e) { console.error(e); return note ? cmdReply(note) : bodyBrain(text); }
+  } catch (e) {
+    console.error(e);
+    const msg = String((e && e.message) || e);
+    lastMindErr = msg;
+    const fallback = note ? cmdReply(note) : bodyBrain(text);
+    if (mindCrashed(msg)) return fallback;
+    return { ...fallback, offline: false, err: msg };
+  }
 }
 async function spontaneous(note, tokens = 140) {
   if (!engine) return null;
@@ -933,7 +957,8 @@ function say(r, quiet, keepBody) {
   if (!r) return;
   if (keepBody) { mood = r.emotion || mood; moodUntil = now() + 120000; } else emote(r.emotion, r.action);
   metaEl.hidden = true;
-  if (r.offline && !offlineHint) { offlineHint = true; metaEl.hidden = false; metaEl.textContent = 'Basic brain only. Wake its mind in Settings.'; }
+  if (r.err) { metaEl.hidden = false; metaEl.textContent = "Nori's mind had a problem: " + r.err.slice(0, 120); }
+  else if (r.offline && (!offlineHint || mindState !== 'awake')) { offlineHint = true; metaEl.hidden = false; metaEl.textContent = mindState === 'waking' ? "Nori's mind is still waking up…" : "Nori's mind is asleep. Tap ☰ › Wake mind."; }
   const line = r.say || '…';
   showBubble(6000 + line.length * 75);
   clearInterval(typing); lineEl.textContent = '';
@@ -1146,7 +1171,14 @@ function closeSheets() { $('scrim').hidden = true; $('menuSheet').hidden = true;
 $('menuBtn').onclick = () => openSheet('menu');
 $('scrim').onclick = closeSheets;
 document.querySelectorAll('[data-close]').forEach(b => b.onclick = closeSheets);
+async function gpuInfo() {
+  try { const a = await navigator.gpu?.requestAdapter(); if (!a) return 'No graphics chip available to the browser.';
+    const mb = n => Math.round(n / 1048576) + ' MB';
+    return `Graphics: ${a.features.has('shader-f16') ? 'f16 ok' : 'no f16'}, buffer ${mb(a.limits.maxBufferSize)}, storage ${mb(a.limits.maxStorageBufferBindingSize)}.`;
+  } catch (e) { return 'Graphics check failed.'; }
+}
 function renderMenu() {
+  gpuInfo().then(g => { const d = $('mindDiag'); if (d) d.textContent = `Mind check: ${MOBILE ? 'phone' : 'computer'} · ${g}${lastMindErr ? ' Last problem: ' + lastMindErr.slice(0, 140) : ''}`; });
   $('mindState').textContent = mindState === 'awake' ? `Awake: thinking with ${(MODELS.find(x => x.key === S.settings.model) || MODELS[0]).name}, on this phone.` : mindState === 'waking' ? 'Waking up…' : gpuOk ? 'Asleep. Nori is using its basic brain.' : "Asleep. This browser can't run it; use Chrome.";
   $('wakeFromMenu').hidden = mindState !== 'asleep' || !gpuOk;
   $('modelOpts').innerHTML = '';
