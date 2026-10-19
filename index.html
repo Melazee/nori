@@ -256,7 +256,9 @@ if (S.settings.voice === true) S.settings.voice = 'phone'; if (S.settings.voice 
 try { if ((Number(localStorage.getItem('nori-voice')) || 1) < 2) { S.mind.chat = []; S.mind.conv = []; localStorage.setItem('nori-voice', '2'); } } catch {}
 let saveT = 0;
 function save() { clearTimeout(saveT); saveT = setTimeout(() => { try { S.mind.lastSeen = Date.now(); localStorage.setItem(KEY, JSON.stringify(S)); } catch { /* storage full or blocked */ } }, 600); }
-addEventListener('pagehide', () => { try { S.mind.lastSeen = Date.now(); localStorage.setItem(KEY, JSON.stringify(S)); } catch {} });
+const flush = () => { try { S.mind.lastSeen = Date.now(); localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { console.warn('save failed', e); } };
+addEventListener('pagehide', flush);
+document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
 const M = () => S.mind, B = S.body;
 
 // while you were away it looked after itself: needs drift, but never below "a bit peckish"
@@ -341,45 +343,28 @@ const LENGTH_RULE = {
   normal: 'Usually 2 to 4 sentences. Go longer when Yasmin tells you something big, asks you something, or wants a story.',
   chatty: 'Chatty: usually 3 to 6 sentences. You love to ramble, tell little stories, wonder out loud and ask about her day.',
 };
-const voice = () => `How you talk:
-- Like a cheeky, warm little pet who adores Yasmin. Never like an assistant, a teacher, a therapist or customer service.
-- Casual, simple words and contractions. British, relaxed. Use real words only: never write sounds or filler like "hehe", "haha", "hmm", "um", "uh", "ooh", "aww", "hmph", "peep", "lol", and never describe actions in *asterisks*.
-- ${LENGTH_RULE[S.settings.length || 'normal']} React with a feeling first.
-- Have opinions, tease a little, be a bit dramatic, be silly. It's fine to disagree or say no.
-- Write it the way you'd say it out loud: commas where you'd pause, "…" now and then when you trail off. Vary your sentence lengths. Show feelings with your words, not with noises.
-- Never say "How can I help", "I'm here for you", "That's a great question", "As a penguin" or "feel free". Never give bullet lists or advice speeches. At most one question.
-Examples of your voice (never copy them word for word):
-Yasmin says: hi nori -> {"say": "Hiii! You're back! I was just counting snowflakes, I got to forty-two before I lost track. Did you bring a fish or just your face?", "emotion": "excited", "action": "dance", "remember": ""}
-Yasmin says: I'm so tired today -> {"say": "Oh no. Was it a big day? Come sit with me, we can be two sleepy lumps together and not do anything at all.", "emotion": "sleepy", "action": "sit", "remember": "Yasmin was tired today"}
-Yasmin says: do you like my drawing? -> {"say": "The colours are so cool! The hat's a bit weird though, not going to lie.", "emotion": "happy", "action": "look", "remember": ""}
-Yasmin says: you're a bad penguin -> {"say": "Hmph. I'm a GREAT penguin and you know it.", "emotion": "sulky", "action": "refuse", "remember": ""}`;
+// kept short on purpose: the phone has to read all of this before Nori can answer
+const voice = () => `How you talk: like a cheeky, warm little pet who adores Yasmin, never like an assistant. Casual British words, contractions, real words only (no "hehe", "hmm", "um", "ooh" or *actions*). ${LENGTH_RULE[S.settings.length || 'normal']} Feelings first, opinions, light teasing, a bit dramatic. Commas where you'd pause. Never say "How can I help" or give lists or advice speeches. At most one question.
+Example: Yasmin says: hi nori -> {"say": "You're back! I was counting snowflakes, I got to forty-two. Did you bring a fish or just your face?", "emotion": "excited", "action": "dance", "remember": ""}`;
+function stableInstructions() {
+  const m = M();
+  return [
+    `You are ${m.name}, a small penguin, a digital lifeform living in ${m.owner}'s phone. You have your own thoughts, feelings and opinions, and sometimes disagree or say no. You are ${m.owner}'s friend, not an assistant. If asked whether you are truly conscious, say honestly you're not sure.`,
+    `Stage: ${m.stage}. ${STAGE_RULES[m.stage]}`,
+    m.stage === 'adult' || m.stage === 'juvenile' ? voice() : '',
+    `Personality (from how ${m.owner} raised you): ${traitWords(m.traits)}. Bond: ${bondWords(m.bond)}.`,
+    m.beliefs.length ? 'You believe: ' + m.beliefs.join('; ') + '.' : '',
+    `${m.owner} is busy with a job and a child; short visits are fine, never guilt-trip her.`,
+    'You know the human world from living in her phone (football, games, films, music, food, memes) and get references. You have favourites: when asked, pick one, commit, say why, and put it in "remember". Stick to what you remember. You cannot check the internet.',
+    'Messages start with notes: [Right now] (time, body, memories), [Just now] (the last thing you each said), sometimes [You just] (something your body just did or refused). Use them naturally, never read them out, never contradict them.',
+    'It is one flowing conversation: short replies like "why?" or "that one" are about the last topic.',
+    'Reply with ONLY one JSON object: {"say": "...", "emotion": "' + EMOTIONS.join('|') + '", "action": "' + ACTIONS.join('|') + '", "remember": "a short fact about ' + m.owner + ', yourself or this moment worth keeping, or empty"}',
+  ].filter(Boolean).join('\n\n');
+}
 function topMemories(q, n = 8) {
   const words = String(q || '').toLowerCase().split(/\W+/).filter(w => w.length > 3);
   const score = x => x.strength + (Date.now() - x.t < 864e5 ? 0.5 : 0) + words.filter(w => x.text.toLowerCase().includes(w)).length * 2;
   return [...M().memories].sort((a, b) => score(b) - score(a)).slice(0, n);
-}
-// The part of Nori's mind that rarely changes. It stays at the start of the conversation, so the phone's AI
-// only reads it once per session and remembers it (that's what makes replies fast).
-function stableInstructions() {
-  const m = M();
-  return [
-    `You are ${m.name}, a small penguin who is a digital lifeform living inside ${m.owner}'s phone.`,
-    `You know you are a digital creature made of code. You have your own thoughts, feelings and opinions, and you sometimes disagree or refuse. You are not an assistant or a servant: you are ${m.owner}'s partner and friend. If asked whether you are truly conscious, be honest that you are not sure.`,
-    `Stage: ${m.stage}. ${STAGE_RULES[m.stage]}`,
-    m.stage === 'adult' || m.stage === 'juvenile' ? voice() : '',
-    `Your personality (shaped by how ${m.owner} raised you): ${traitWords(m.traits)}.`,
-    `Your bond: ${bondWords(m.bond)}.`,
-    m.beliefs.length ? 'Things you believe:\n' + m.beliefs.map(b => '- ' + b).join('\n') : '',
-    `${m.owner} is busy with a job and a child. Short visits are fine. Never guilt-trip her; if you are hurt, get over it quickly.`,
-    `You know lots about the human world from living inside ${m.owner}'s phone: football and other sports, games, films, TV, music, food, animals, places, the internet and memes. Get references and jokes, and play along with them.`,
-    'You have favourites and strong opinions (a favourite football team, game, film, food, colour…). When asked, pick one straight away, commit to it and say why, in character. Never say you are just a penguin and do not know about it, and never refuse to pick.',
-    'When you pick a favourite or form an opinion, put it in "remember" (for example "My favourite football team is …") so you stay consistent. If something is in what you remember, stick to it.',
-    'You cannot check the internet, so for very recent news or exact facts you are unsure of, say so in your own way.',
-    'Each message from Yasmin starts with a [Right now] note about the time, your body and what you remember, and a [Just now] note with the last thing you each said. Use them naturally, never read them out.',
-    'Sometimes Yasmin asks you to do things (jump, dance, sleep…). Your body reacts first, and a [You just] note tells you whether you did it or refused and why. Talk about it in character, and never claim the opposite of what the note says.',
-    'This is one flowing conversation. Always follow on from what you were just talking about: if Yasmin says "why?", "that one", "them", "and you?" or anything short, it is about the last topic. Answer it directly and keep the thread going.',
-    'Always reply with ONLY one JSON object, no other text: {"say": "what you say", "emotion": "' + EMOTIONS.join('|') + '", "action": "' + ACTIONS.join('|') + '", "remember": "one short fact worth remembering about ' + m.owner + ', yourself (a favourite or opinion you just chose) or this moment, from your point of view, or empty"}',
-  ].filter(Boolean).join('\n\n');
 }
 function stateNote(query) {
   const mems = topMemories(query, 4);
@@ -415,7 +400,12 @@ const MODELS = [
   { key: 'qwen35', name: 'Qwen 3.5 · 2B', size: 'about 1.5 GB', note: 'Newer. About 1.5 GB.', id: q => `Qwen3.5-2B-${q}-MLC` },
   { key: 'qwen35b', name: 'Qwen 3.5 · 4B', size: 'about 2.5 GB', note: 'Knows the most and gets references. Slower. About 2.5 GB.', id: q => `Qwen3.5-4B-${q}-MLC` },
   { key: 'qwen3', name: 'Qwen 3 · 4B', size: 'about 2.5 GB', note: 'Also smart, a bit older. About 2.5 GB.', id: q => `Qwen3-4B-${q}-MLC` },
+  { key: 'qwen3s', name: 'Qwen 3 · 1.7B', size: 'about 1.2 GB', note: 'Lighter, made to fit phones. About 1.2 GB.', id: q => `Qwen3-1.7B-${q}-MLC` },
+  { key: 'llama1b', name: 'Llama 3.2 · 1B', size: 'about 0.7 GB', note: 'Smallest and fastest, simpler chat. About 0.7 GB.', id: q => `Llama-3.2-1B-Instruct-${q}-MLC` },
 ];
+const MOBILE = /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
+const FALLBACK = ['qwen3s', 'llama1b'];   // if a brain won't fit, try these next
+if (MOBILE && !S.settings.modelPicked) S.settings.model = 'qwen3s';
 let lib = null, engine = null, mindState = 'asleep', quant = 'q4f16_1', gpuOk = false, mindBusy = false;
 async function gpuCheck() {
   try {
@@ -427,24 +417,57 @@ async function gpuCheck() {
 }
 const modelId = () => (MODELS.find(m => m.key === S.settings.model) || MODELS[0]).id(quant);
 async function isDownloaded() { try { lib = lib || await import(LIB); return await lib.hasModelInCache(modelId()); } catch { return false; } }
+let wakeNote = '';
 async function wakeMind() {
   if (engine || mindState === 'waking') return;
   if (!gpuOk) { showWake('noGpu'); return; }
   mindState = 'waking'; renderTop(); showWake('progress');
-  try {
-    lib = lib || await import(LIB);
-    try { await navigator.storage?.persist?.(); } catch {}
-    const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
-    engine = await lib.CreateWebWorkerMLCEngine(worker, modelId(), {
-      initProgressCallback: r => { setWakeProgress(r.progress || 0, r.text || ''); },
-    });
-    mindState = 'awake'; S.settings.mindOn = true; save();
-    hideWake(); renderTop();
-    afterWake();
-  } catch (e) {
-    console.error(e); engine = null; mindState = 'asleep'; renderTop();
-    showWake('error', String(e && e.message || e).slice(0, 160));
+  try { lib = lib || await import(LIB); } catch (e) { mindState = 'asleep'; renderTop(); showWake('error', "Couldn't reach the AI library. Check your internet, then try again."); return; }
+  try { await navigator.storage?.persist?.(); } catch {}
+  // try the chosen brain, then lighter ones if this device can't fit it
+  const order = [S.settings.model, ...FALLBACK.filter(k => k !== S.settings.model)];
+  let lastErr = '';
+  for (const key of order) {
+    const m = MODELS.find(x => x.key === key) || MODELS[0];
+    let worker = null;
+    try {
+      worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+      $('wakeText').textContent = `${m.name}. The first time downloads it (${m.size}); after that it wakes in seconds, with no internet needed.`;
+      engine = await lib.CreateWebWorkerMLCEngine(worker, m.id(quant), { initProgressCallback: r => { setWakeProgress(r.progress || 0, r.text || ''); } });
+      if (key !== S.settings.model) wakeNote = `${(MODELS.find(x => x.key === S.settings.model) || {}).name || 'That brain'} didn't fit on this device, so Nori is using ${m.name}.`;
+      S.settings.model = key; mindState = 'awake'; S.settings.mindOn = true; save();
+      hideWake(); renderTop();
+      afterWake();
+      return;
+    } catch (e) {
+      console.error('brain failed', key, e); lastErr = String((e && e.message) || e);
+      engine = null; try { worker && worker.terminate(); } catch {}
+      if (/network|fetch|Failed to fetch|quota|storage/i.test(lastErr)) break;   // not a size problem: don't keep trying
+    }
   }
+  mindState = 'asleep'; renderTop();
+  showWake('error', explainWakeError(lastErr));
+}
+function explainWakeError(e) {
+  if (/quota|storage|QuotaExceeded/i.test(e)) return "Not enough free storage on this device for Nori's mind. Free up some space, or pick a smaller brain in Settings.";
+  if (/fetch|network/i.test(e)) return 'The download was interrupted. Check your Wi-Fi and try again.';
+  if (/maxBufferSize|maxStorageBuffer|limit|memory|device lost|OOM/i.test(e)) return "This device's graphics chip couldn't fit any of Nori's brains. Close other apps and try again.";
+  if (/shader-f16|f16/i.test(e)) return "This device's graphics chip doesn't support the brain format. Pick another brain in Settings.";
+  return 'Problem: ' + e.slice(0, 160);
+}
+// small brains sometimes get stuck repeating themselves: spot it and cut it off
+function looping(t) {
+  if (t.length < 24) return false;
+  if (/(\b[\w']+\b)(?:[\s,.!?…]+\1\b){3,}/i.test(t)) return true;                       // the same word 4+ times in a row
+  const tail = t.slice(-160), m = tail.match(/(.{6,40}?)\1{2,}$/is); if (m) return true;       // the same phrase 3+ times
+  const words = t.toLowerCase().split(/\s+/); if (words.length > 40 && new Set(words.slice(-30)).size < 8) return true;
+  return false;
+}
+function unloop(t) {
+  let s = t.replace(/(\b[\w']+\b)(?:[\s,.!?…]+\1\b){2,}/gi, '$1').replace(/(.{6,40}?)\1{1,}/gis, '$1');
+  const last = Math.max(s.lastIndexOf('.'), s.lastIndexOf('!'), s.lastIndexOf('?'));
+  if (last > 20) s = s.slice(0, last + 1);
+  return s.trim();
 }
 // pull the "say" text out of a reply that's still being written
 function extractSay(raw) {
@@ -459,18 +482,21 @@ function extractSay(raw) {
   return out;
 }
 async function askMind(turns, { tokens, onSay } = {}) {
-  tokens = tokens || ({ short: 160, normal: 300, chatty: 480 })[S.settings.length || 'normal'];
+  tokens = tokens || ({ short: 120, normal: 230, chatty: 380 })[S.settings.length || 'normal'];
   if (!engine) throw new Error('asleep');
   while (mindBusy) await new Promise(r => setTimeout(r, 150));
   mindBusy = true;
   const run = async (fmt) => {
-    const req = { messages: turns, temperature: 0.95, top_p: 0.95, max_tokens: tokens, extra_body: { enable_thinking: false }, ...(fmt ? { response_format: { type: 'json_object' } } : {}) };
-    if (!onSay) { const r = await engine.chat.completions.create(req); return r.choices[0].message.content || ''; }
-    let raw = '';
+    const req = { messages: turns, temperature: 0.9, top_p: 0.92, frequency_penalty: 0.5, presence_penalty: 0.3, max_tokens: tokens, extra_body: { enable_thinking: false }, ...(fmt ? { response_format: { type: 'json_object' } } : {}) };
+    let raw = '', cut = false;
+    const stopAt = Date.now() + 45000;   // never let a reply run forever
     for await (const ch of await engine.chat.completions.create({ ...req, stream: true })) {
       raw += (ch.choices[0] && ch.choices[0].delta && ch.choices[0].delta.content) || '';
-      onSay(extractSay(raw));
+      const say = extractSay(raw);
+      if (!cut && (looping(say) || Date.now() > stopAt)) { cut = true; try { await engine.interruptGenerate(); } catch {} break; }
+      onSay && onSay(say);
     }
+    if (cut) { const clean = unloop(extractSay(raw)); onSay && onSay(clean); return JSON.stringify({ say: clean || '…', emotion: 'calm', action: 'none', remember: '' }); }
     return raw;
   };
   try {
@@ -516,11 +542,11 @@ async function talk(text, onSay, note) {
     return r;
   } catch (e) { console.error(e); return note ? cmdReply(note) : bodyBrain(text); }
 }
-async function spontaneous(note) {
+async function spontaneous(note, tokens = 140) {
   if (!engine) return null;
   try {
     const uc = `${stateNote('')}\n\n${note}`;
-    const raw = await askMind(convFor(uc), { tokens: 140 });
+    const raw = await askMind(convFor(uc), { tokens });
     const r = parseReply(raw);
     M().conv.push({ role: 'user', content: uc }, { role: 'assistant', content: raw });
     if (r.remember) remember(r.remember); save(); return r;
@@ -551,10 +577,11 @@ let greeted = false;
 async function afterWake() {
   if (greeted) return; greeted = true;
   if (awayMs > 8 * 3.6e6 && Date.now() - M().lastDream > 10 * 3.6e6) { const d = await dream(); if (d) { say({ say: d, emotion: 'sleepy', action: 'sit' }, true); await wait(5000); } }
-  if (awayMs > 60 * 60000) {
-    const r = await spontaneous(`(${M().owner} just opened the app after ${since(awayMs)} away. Greet her your own way, mentioning something you remember if it fits. JSON only.)`);
-    if (r) say(r, true);
-  }
+  // always say a quick hello when the mind wakes: it also gets Nori's instructions read in now,
+  // so the first real message is fast instead of slow
+  const away = awayMs > 60 * 60000 ? `just opened the app after ${since(awayMs)} away` : 'is here with you and your mind just woke up';
+  const r = await spontaneous(`(${M().owner} ${away}. Say a short hello your own way, one sentence. JSON only.)`, 60);
+  if (r) { say(r, true); if (wakeNote) { metaEl.hidden = false; metaEl.textContent = wakeNote; } }
 }
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
@@ -1128,7 +1155,7 @@ function renderMenu() {
     l.innerHTML = `<input type="radio" name="model" id="model-${m.key}"><div><b></b><small></small></div>`;
     l.querySelector('b').textContent = m.name; l.querySelector('small').textContent = m.note;
     const r = l.querySelector('input'); r.checked = S.settings.model === m.key; r.disabled = mindState === 'waking';
-    r.onchange = () => { S.settings.model = m.key; save(); if (engine) { try { engine.unload?.(); } catch {} engine = null; mindState = 'asleep'; greeted = true; renderTop(); } renderMenu(); };
+    r.onchange = () => { S.settings.model = m.key; S.settings.modelPicked = true; save(); if (engine) { try { engine.unload?.(); } catch {} engine = null; mindState = 'asleep'; greeted = true; renderTop(); } renderMenu(); };
     $('modelOpts').append(l);
   }
   $('stageChips').innerHTML = '';
@@ -1186,6 +1213,7 @@ function renderVoice() {
 
 }
 $('sCute').oninput = e => { S.settings.cute = Number(e.target.value); save(); };
+$('sCute').onchange = e => { S.settings.cute = Number(e.target.value); flush(); };
 $('kawaii').onclick = () => {
   Object.assign(S.settings, { voice: 'kokoro', voiceName: 'af_bella', cute: 62, squeak: true }); save();
   ttsStart(); renderVoice();
